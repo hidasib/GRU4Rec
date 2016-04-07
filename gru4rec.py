@@ -13,7 +13,29 @@ import pandas as pd
 from collections import OrderedDict
 srng = RandomStreams()
 class GRU4Rec:
-    def __init__(self, layers, n_epochs=10, batch_size=50, dropout_p_hidden=0.0, learning_rate=0.05, momentum=0.0, adapt='adagrad', decay=0.9, grad_cap=0, sigma=0, 
+    ''' Initializes the network. You can set the following parameters.
+    layers -- list of the number of GRU units in the layers (default: [100] --> 100 units in one layer)
+    n_epochs -- number of training epochs (default: 10)
+    batch_size -- size of the minibacth, also effect the number of negative samples through minibatch based sampling (default: 50)
+    dropout_p_hidden -- probability of dropout of hidden units (default: 0.4)
+    learning_rate -- learning rate (default: 0.05)
+    momentum -- if not zero, Nesterov momentum will be applied during training with the given strength (default: 0.0)
+    adapt -- either None, 'adagrad' or 'rmsprop', sets the appropriate learning rate adaptation strategy (default: 'adagrad')
+    decay -- decay parameter for RMSProp, has no effect in other modes (default: 0.9)
+    grad_cap -- clip gradients that exceede this value to this value, 0 means no clipping (default: 0.0)
+    sigma -- "width" of initialization; either the standard deviation or the min/max of the init interval (with normal and uniform initializations respectively); 0 means adaptive normalization (sigma depends on the size of the weight matrix); (default: 0)
+    init_as_normal -- False: init from uniform distribution on [-sigma,sigma]; True: init from normal distribution N(0,sigma); (default: False)
+    reset_after_session -- whether the hidden state is set to zero after a session finished (default: True)
+    loss -- 'top1', 'bpr' or 'cross-entropy' to select the loss function (default: 'top1')
+    hidden_act -- 'tanh' or 'relu' to set the activation function on the hidden state (default: 'tanh')
+    final_act -- None, 'linear', 'relu' or 'tanh' to set the activation function of the final layer where appropriate (cross-entropy always uses softmax), None means default (tanh if the loss is brp or top1) (default: None)
+    train_random_order -- whether to randomize the order of sessions in each epoch (default: False)
+    lmbd -- coefficient of the L2 regularization (default: 0.0)
+    session_key -- header of the session ID column in the input file (default: 'SessionId')
+    item_key -- header of the item ID column in the input file (default: 'ItemId')
+    time_key -- header of the timestamp column in the input file (default: 'Time')
+    '''
+    def __init__(self, layers, n_epochs=10, batch_size=50, dropout_p_hidden=0.4, learning_rate=0.05, momentum=0.0, adapt='adagrad', decay=0.9, grad_cap=0, sigma=0, 
                  init_as_normal=False, reset_after_session=True, loss='top1', hidden_act='tanh', final_act=None, train_random_order=False, lmbd=0.0, 
                  session_key='SessionId', item_key='ItemId', time_key='Time'):
         self.layers = layers
