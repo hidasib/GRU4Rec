@@ -42,6 +42,7 @@ def evaluate_sessions_batch(pr, test_data, items=None, cut_off=20, batch_size=10
         (Recall@N, MRR@N)
     
     '''
+    pr.predict = None #In case someone would try to run with both items=None and not None on the same model without realizing that the predict function needs to be replaced
     test_data.sort_values([session_key, time_key], inplace=True)
     offset_sessions = np.zeros(test_data[session_key].nunique()+1, dtype=np.int32)
     offset_sessions[1:] = test_data.groupby(session_key).size().cumsum()
@@ -64,7 +65,7 @@ def evaluate_sessions_batch(pr, test_data, items=None, cut_off=20, batch_size=10
         in_idx[valid_mask] = test_data.ItemId.values[start_valid]
         for i in range(minlen-1):
             out_idx = test_data.ItemId.values[start_valid+i+1]
-            if items is None:
+            if items is not None:
                 uniq_out = np.unique(np.array(out_idx, dtype=np.int32))
                 preds = pr.predict_next_batch(iters, in_idx, np.hstack([items, uniq_out[~np.in1d(uniq_out,items)]]), batch_size)
             else:
@@ -73,7 +74,7 @@ def evaluate_sessions_batch(pr, test_data, items=None, cut_off=20, batch_size=10
                 preds += np.random.rand(*preds.values.shape) * 1e-8
             preds.fillna(0, inplace=True)
             in_idx[valid_mask] = out_idx
-            if items is None:
+            if items is not None:
                 others = preds.ix[items].values.T[valid_mask].T
                 targets = np.diag(preds.ix[in_idx].values)[valid_mask]
                 ranks = (others > targets).sum(axis=0) +1
