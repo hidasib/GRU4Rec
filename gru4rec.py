@@ -13,27 +13,54 @@ import pandas as pd
 from collections import OrderedDict
 srng = RandomStreams()
 class GRU4Rec:
-    ''' Initializes the network. You can set the following parameters.
-    layers -- list of the number of GRU units in the layers (default: [100] --> 100 units in one layer)
-    n_epochs -- number of training epochs (default: 10)
-    batch_size -- size of the minibacth, also effect the number of negative samples through minibatch based sampling (default: 50)
-    dropout_p_hidden -- probability of dropout of hidden units (default: 0.4)
-    learning_rate -- learning rate (default: 0.05)
-    momentum -- if not zero, Nesterov momentum will be applied during training with the given strength (default: 0.0)
-    adapt -- either None, 'adagrad' or 'rmsprop', sets the appropriate learning rate adaptation strategy (default: 'adagrad')
-    decay -- decay parameter for RMSProp, has no effect in other modes (default: 0.9)
-    grad_cap -- clip gradients that exceede this value to this value, 0 means no clipping (default: 0.0)
-    sigma -- "width" of initialization; either the standard deviation or the min/max of the init interval (with normal and uniform initializations respectively); 0 means adaptive normalization (sigma depends on the size of the weight matrix); (default: 0)
-    init_as_normal -- False: init from uniform distribution on [-sigma,sigma]; True: init from normal distribution N(0,sigma); (default: False)
-    reset_after_session -- whether the hidden state is set to zero after a session finished (default: True)
-    loss -- 'top1', 'bpr' or 'cross-entropy' to select the loss function (default: 'top1')
-    hidden_act -- 'tanh' or 'relu' to set the activation function on the hidden state (default: 'tanh')
-    final_act -- None, 'linear', 'relu' or 'tanh' to set the activation function of the final layer where appropriate (cross-entropy always uses softmax), None means default (tanh if the loss is brp or top1) (default: None)
-    train_random_order -- whether to randomize the order of sessions in each epoch (default: False)
-    lmbd -- coefficient of the L2 regularization (default: 0.0)
-    session_key -- header of the session ID column in the input file (default: 'SessionId')
-    item_key -- header of the item ID column in the input file (default: 'ItemId')
-    time_key -- header of the timestamp column in the input file (default: 'Time')
+    '''
+    GRU4Rec(layers, n_epochs=10, batch_size=50, dropout_p_hidden=0.4, learning_rate=0.05, momentum=0.0, adapt='adagrad', decay=0.9, grad_cap=0, sigma=0, init_as_normal=False, reset_after_session=True, loss='top1', hidden_act='tanh', final_act=None, train_random_order=False, lmbd=0.0, session_key='SessionId', item_key='ItemId', time_key='Time')
+    
+    Initializes the network.
+
+    Parameters
+    -----------
+    layers : 1D array
+        list of the number of GRU units in the layers (default: [100] --> 100 units in one layer)
+    n_epochs : int
+        number of training epochs (default: 10)
+    batch_size : int
+        size of the minibacth, also effect the number of negative samples through minibatch based sampling (default: 50)
+    dropout_p_hidden : float
+        probability of dropout of hidden units (default: 0.4)
+    learning_rate : float
+        learning rate (default: 0.05)
+    momentum : float
+        if not zero, Nesterov momentum will be applied during training with the given strength (default: 0.0)
+    adapt : None, 'adagrad' or 'rmsprop'
+        sets the appropriate learning rate adaptation strategy (default: 'adagrad')
+    decay : float
+        decay parameter for RMSProp, has no effect in other modes (default: 0.9)
+    grad_cap : float
+        clip gradients that exceede this value to this value, 0 means no clipping (default: 0.0)
+    sigma : float
+        "width" of initialization; either the standard deviation or the min/max of the init interval (with normal and uniform initializations respectively); 0 means adaptive normalization (sigma depends on the size of the weight matrix); (default: 0)
+    init_as_normal : boolean
+        False: init from uniform distribution on [-sigma,sigma]; True: init from normal distribution N(0,sigma); (default: False)
+    reset_after_session : boolean
+        whether the hidden state is set to zero after a session finished (default: True)
+    loss : 'top1', 'bpr' or 'cross-entropy'
+        selects the loss function (default: 'top1')
+    hidden_act : 'tanh' or 'relu' 
+        selects the activation function on the hidden states (default: 'tanh')
+    final_act : None, 'linear', 'relu' or 'tanh' 
+        selects the activation function of the final layer where appropriate (cross-entropy always uses softmax), None means default (tanh if the loss is brp or top1) (default: None)
+    train_random_order : boolean
+        whether to randomize the order of sessions in each epoch (default: False)
+    lmbd : float
+        coefficient of the L2 regularization (default: 0.0)
+    session_key : string
+        header of the session ID column in the input file (default: 'SessionId')
+    item_key : string
+        header of the item ID column in the input file (default: 'ItemId')
+    time_key : string
+        header of the timestamp column in the input file (default: 'Time')
+        
     '''
     def __init__(self, layers, n_epochs=10, batch_size=50, dropout_p_hidden=0.4, learning_rate=0.05, momentum=0.0, adapt='adagrad', decay=0.9, grad_cap=0, sigma=0, 
                  init_as_normal=False, reset_after_session=True, loss='top1', hidden_act='tanh', final_act=None, train_random_order=False, lmbd=0.0, 
@@ -240,6 +267,16 @@ class GRU4Rec:
         y = self.final_activation(T.dot(y, self.Wy.T) + self.By.flatten())
         return H_new, y
     def fit(self, data):
+        ''' 
+        Trains the network.
+        
+        Parameters
+        --------
+        data: pandas.DataFrame
+            Training data. It contains the transactions of the sessions. It has one column for session IDs, one for item IDs and one for the timestamp of the events (unix timestamps).
+            It must have a header. Column names are arbitrary, but must correspond to the ones you set during the initialization of the network (session_key, item_key, time_key properties).
+            
+        '''
         self.predict = None
         self.error_during_train = False
         itemids = data[self.item_key].unique()
@@ -307,6 +344,30 @@ class GRU4Rec:
             print('Epoch{}\tloss: {:.6f}'.format(epoch, avgc))
 
     def predict_next_batch(self, session_ids, input_item_ids, predict_for_item_ids=None, batch=100):
+        '''
+        Gives predicton scores for a selected set of items. Can be used in batch mode to predict for multiple independent events (i.e. events of different sessions) at once and thus speed up evaluation.
+        
+        If the session ID at a given coordinate of the session_ids parameter remains the same during subsequent calls of the function, the corresponding hidden state of the network will be kept intact (i.e. that's how one can predict an item to a session).
+        If it changes, the hidden state of the network is reset to zeros.
+                
+        Parameters
+        --------
+        session_ids : 1D array
+            Contains the session IDs of the events of the batch. Its length must equal to the prediction batch size (batch param).
+        input_item_ids : 1D array
+            Contains the item IDs of the events of the batch. Every item ID must be must be in the training data of the network. Its length must equal to the prediction batch size (batch param).
+        predict_for_item_ids : 1D array (optional)
+            IDs of items for which the network should give prediction scores. Every ID must be in the training set. The default value is None, which means that the network gives prediction on its every output (i.e. for all items in the training set).
+        batch : int
+            Prediction batch size.
+            
+        Returns
+        --------
+        out : pandas.DataFrame
+            Prediction scores for selected items for every event of the batch. 
+            Columns: events of the batch; rows: items. Rows are indexed by the item IDs.
+        
+        '''
         if self.error_during_train: raise Exception
         if self.predict is None or self.predict_batch!=batch:
             X = T.ivector()
