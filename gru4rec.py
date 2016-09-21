@@ -152,6 +152,14 @@ class GRU4Rec:
             return self.floatX(np.random.randn(*shape) * sigma)
         else:
             return self.floatX(np.random.rand(*shape) * sigma * 2 - sigma)
+    def extend_weights(self, W, n_new):
+        matrix = W.get_value()
+        sigma = self.sigma if self.sigma != 0 else np.sqrt(6.0 / (matrix.shape[0] + matrix.shape[1] + n_new))
+        if self.init_as_normal:
+            new_rows = self.floatX(np.random.randn(n_new, matrix.shape[1]) * sigma)
+        else:
+            new_rows = self.floatX(np.random.rand(n_new, matrix.shape[1]) * sigma * 2 - sigma)
+        W.set_value(np.vstack([matrix, new_rows]))
     def init(self, data):
         data.sort_values([self.session_key, self.time_key], inplace=True)
         offset_sessions = np.zeros(data[self.session_key].nunique()+1, dtype=np.int32)
@@ -329,24 +337,41 @@ class GRU4Rec:
         else:
             y = self.final_activation(T.dot(y, self.Wy.T) + self.By.flatten())
             return H_new, y, [Sx]
-    def fit(self, data):
+    def fit(self, data, retrain=False):
         '''
         Trains the network.
 
         Parameters
         --------
-        data: pandas.DataFrame
+        data : pandas.DataFrame
             Training data. It contains the transactions of the sessions. It has one column for session IDs, one for item IDs and one for the timestamp of the events (unix timestamps).
             It must have a header. Column names are arbitrary, but must correspond to the ones you set during the initialization of the network (session_key, item_key, time_key properties).
+        retrain : boolean
+            If False, do normal train. If True, do additional train (weigths from previous trainings are kept as the initial network) (default: False)
 
         '''
         self.predict = None
         self.error_during_train = False
         itemids = data[self.item_key].unique()
-        self.n_items = len(itemids)
-        self.itemidmap = pd.Series(data=np.arange(self.n_items), index=itemids)
-        data = pd.merge(data, pd.DataFrame({self.item_key:itemids, 'ItemIdx':self.itemidmap[itemids].values}), on=self.item_key, how='inner')
-        offset_sessions = self.init(data)
+        if not retrain:
+            self.n_items = len(itemids)
+            self.itemidmap = pd.Series(data=np.arange(self.n_items), index=itemids)
+            data = pd.merge(data, pd.DataFrame({self.item_key:itemids, 'ItemIdx':self.itemidmap[itemids].values}), on=self.item_key, how='inner')
+            offset_sessions = self.init(data)
+        else:
+            new_item_mask = ~np.in1d(itemids, self.itemidmap.index)
+            n_new_items = new_item_mask.sum()
+            if n_new_items:
+                self.itemidmap = self.itemidmap.append(pd.Series(index=itemids[new_item_mask], data=np.arange(n_new_items) + len(self.itemidmap)))
+                for W in [self.Wx[0], self.Wy]:
+                    self.extend_weights(W, n_new_items)
+                self.By.set_value(np.vstack([self.By.get_value(), np.zeros((n_new_items, 1), dtype=theano.config.floatX)]))
+                self.n_items += n_new_items
+                print('Added {} new items. Number of items is {}.'.format(n_new_items, self.n_items))
+            data = pd.merge(data, pd.DataFrame({self.item_key:itemids, 'ItemIdx':self.itemidmap[itemids].values}), on=self.item_key, how='inner')
+            data.sort_values([self.session_key, self.time_key], inplace=True)
+            offset_sessions = np.zeros(data[self.session_key].nunique()+1, dtype=np.int32)
+            offset_sessions[1:] = data.groupby(self.session_key).size().cumsum()
         X = T.ivector()
         Y = T.ivector()
         H_new, Y_pred, sampled_params = self.model(X, self.H, Y, self.dropout_p_hidden)
