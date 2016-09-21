@@ -62,9 +62,9 @@ def evaluate_sessions_batch(pr, test_data, items=None, cut_off=20, batch_size=10
             break
         start_valid = start[valid_mask]
         minlen = (end[valid_mask]-start_valid).min()
-        in_idx[valid_mask] = test_data.ItemId.values[start_valid]
+        in_idx[valid_mask] = test_data[item_key].values[start_valid]
         for i in range(minlen-1):
-            out_idx = test_data.ItemId.values[start_valid+i+1]
+            out_idx = test_data[item_key].values[start_valid+i+1]
             if items is not None:
                 uniq_out = np.unique(np.array(out_idx, dtype=np.int32))
                 preds = pr.predict_next_batch(iters, in_idx, np.hstack([items, uniq_out[~np.in1d(uniq_out,items)]]), batch_size)

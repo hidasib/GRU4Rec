@@ -14,8 +14,7 @@ from collections import OrderedDict
 srng = RandomStreams()
 class GRU4Rec:
     '''
-    GRU4Rec(layers, n_epochs=10, batch_size=50, dropout_p_hidden=0.4, learning_rate=0.05, momentum=0.0, adapt='adagrad', decay=0.9, grad_cap=0, sigma=0, init_as_normal=False, reset_after_session=True, loss='top1', hidden_act='tanh', final_act=None, train_random_order=False, lmbd=0.0, session_key='SessionId', item_key='ItemId', time_key='Time')
-    
+    GRU4Rec(layers, n_epochs=10, batch_size=50, dropout_p_hidden=0.5, learning_rate=0.05, momentum=0.0, adapt='adagrad', decay=0.9, grad_cap=0, sigma=0, init_as_normal=False, reset_after_session=True, loss='top1', hidden_act='tanh', final_act=None, train_random_order=False, lmbd=0.0, session_key='SessionId', item_key='ItemId', time_key='Time')
     Initializes the network.
 
     Parameters
@@ -27,13 +26,13 @@ class GRU4Rec:
     batch_size : int
         size of the minibacth, also effect the number of negative samples through minibatch based sampling (default: 50)
     dropout_p_hidden : float
-        probability of dropout of hidden units (default: 0.4)
+        probability of dropout of hidden units (default: 0.5)
     learning_rate : float
         learning rate (default: 0.05)
     momentum : float
         if not zero, Nesterov momentum will be applied during training with the given strength (default: 0.0)
-    adapt : None, 'adagrad' or 'rmsprop'
-        sets the appropriate learning rate adaptation strategy (default: 'adagrad')
+    adapt : None, 'adagrad', 'rmsprop', 'adam', 'adadelta'
+        sets the appropriate learning rate adaptation strategy, use None for standard SGD (default: 'adagrad')
     decay : float
         decay parameter for RMSProp, has no effect in other modes (default: 0.9)
     grad_cap : float
@@ -46,10 +45,11 @@ class GRU4Rec:
         whether the hidden state is set to zero after a session finished (default: True)
     loss : 'top1', 'bpr' or 'cross-entropy'
         selects the loss function (default: 'top1')
-    hidden_act : 'tanh' or 'relu' 
+    hidden_act : 'tanh' or 'relu'
         selects the activation function on the hidden states (default: 'tanh')
-    final_act : None, 'linear', 'relu' or 'tanh' 
-        selects the activation function of the final layer where appropriate (cross-entropy always uses softmax), None means default (tanh if the loss is brp or top1) (default: None)
+    final_act : None, 'linear', 'relu' or 'tanh'
+        selects the activation function of the final layer where appropriate, None means default (tanh if the loss is brp or top1; softmax for cross-entropy),
+        cross-entropy is only affeted by 'tanh' where the softmax layers is preceeded by a tanh nonlinearity (default: None)
     train_random_order : boolean
         whether to randomize the order of sessions in each epoch (default: False)
     lmbd : float
@@ -60,10 +60,10 @@ class GRU4Rec:
         header of the item ID column in the input file (default: 'ItemId')
     time_key : string
         header of the timestamp column in the input file (default: 'Time')
-        
+
     '''
-    def __init__(self, layers, n_epochs=10, batch_size=50, dropout_p_hidden=0.4, learning_rate=0.05, momentum=0.0, adapt='adagrad', decay=0.9, grad_cap=0, sigma=0, 
-                 init_as_normal=False, reset_after_session=True, loss='top1', hidden_act='tanh', final_act=None, train_random_order=False, lmbd=0.0, 
+    def __init__(self, layers, n_epochs=10, batch_size=50, dropout_p_hidden=0.5, learning_rate=0.05, momentum=0.0, adapt='adagrad', decay=0.9, grad_cap=0, sigma=0,
+                 init_as_normal=False, reset_after_session=True, loss='top1', hidden_act='tanh', final_act=None, train_random_order=False, lmbd=0.0,
                  session_key='SessionId', item_key='ItemId', time_key='Time'):
         self.layers = layers
         self.n_epochs = n_epochs
@@ -81,14 +81,16 @@ class GRU4Rec:
         self.grad_cap = grad_cap
         self.train_random_order = train_random_order
         self.lmbd = lmbd
-        if adapt == 'rmsprop':
-            self.adapt = 'rmsprop'
-        elif adapt == 'adagrad':
-            self.adapt = 'adagrad'
-        else:
-            self.adapt = False
+        if adapt == 'rmsprop': self.adapt = 'rmsprop'
+        elif adapt == 'adagrad': self.adapt = 'adagrad'
+        elif adapt == 'adadelta': self.adapt = 'adadelta'
+        elif adapt == 'adam': self.adapt = 'adam'
+        else: self.adapt = False
         if loss=='cross-entropy':
-            self.final_activation=self.softmax
+            if final_act == 'tanh':
+                self.final_activation=self.softmaxth
+            else:
+                self.final_activation=self.softmax
             self.loss_function=self.cross_entropy
         elif loss=='bpr':
             if final_act == 'linear':
@@ -108,13 +110,10 @@ class GRU4Rec:
             self.loss_function=self.top1
         else:
             raise NotImplementedError
-        if hidden_act=='relu':
-            self.hidden_activation=self.relu
-        elif hidden_act=='tanh':
-            self.hidden_activation=self.tanh
-        else:
-            raise NotImplementedError
-    ######################ACTIVATION FUNCTIONS FOR FINAL LAYER#####################
+        if hidden_act=='relu': self.hidden_activation=self.relu
+        elif hidden_act=='tanh': self.hidden_activation=self.tanh
+        else: raise NotImplementedError
+    ######################ACTIVATION FUNCTIONS#####################
     def linear(self,X):
         return X
     def tanh(self,X):
@@ -122,24 +121,22 @@ class GRU4Rec:
     def softmax(self,X):
         e_x = T.exp(X - X.max(axis=1).dimshuffle(0, 'x'))
         return e_x / e_x.sum(axis=1).dimshuffle(0, 'x')
+    def softmaxth(self,X):
+        X = self.tanh(X)
+        e_x = T.exp(X - X.max(axis=1).dimshuffle(0, 'x'))
+        return e_x / e_x.sum(axis=1).dimshuffle(0, 'x')
     def relu(self,X):
         return T.maximum(X, 0)
     def sigmoid(self, X):
         return T.nnet.sigmoid(X)
     #################################LOSS FUNCTIONS################################
-    #It is assumed that only one desired output is active (otherwise it will be very slow)
-    #Use softmax activation function as the output with cross-entropy
     def cross_entropy(self, yhat):
         return T.cast(T.mean(-T.log(T.diag(yhat))), theano.config.floatX)
-    #It is assumed that only one desired output is active (otherwise it will be very slow)
-    #Use linear or tanh activation function as the output with BPR
     def bpr(self, yhat):
         return T.cast(T.mean(-T.log(T.nnet.sigmoid(T.diag(yhat)-yhat.T))), theano.config.floatX)
-    #It is assumed that only one desired output is active (otherwise it will be very slow)
-    #Use linear or tanh activation function as the output with error-rate
     def top1(self, yhat):
-        return T.cast(T.mean(T.mean(T.nnet.sigmoid(-T.diag(yhat)+yhat.T)+T.nnet.sigmoid(yhat.T**2), axis=0)-T.nnet.sigmoid(T.diag(yhat)**2)/self.batch_size), theano.config.floatX)
-    
+        yhatT = yhat.T
+        return T.cast(T.mean(T.mean(T.nnet.sigmoid(-T.diag(yhat)+yhatT)+T.nnet.sigmoid(yhatT**2), axis=0)-T.nnet.sigmoid(T.diag(yhat)**2)/self.batch_size), theano.config.floatX)
     ###############################################################################
     def floatX(self, X):
         return np.asarray(X, dtype=theano.config.floatX)
@@ -149,22 +146,30 @@ class GRU4Rec:
             return theano.shared(self.floatX(np.random.randn(*shape) * sigma), borrow=True)
         else:
             return theano.shared(self.floatX(np.random.rand(*shape) * sigma * 2 - sigma), borrow=True)
+    def init_matrix(self, shape):
+        sigma = self.sigma if self.sigma != 0 else np.sqrt(6.0 / (shape[0] + shape[1]))
+        if self.init_as_normal:
+            return self.floatX(np.random.randn(*shape) * sigma)
+        else:
+            return self.floatX(np.random.rand(*shape) * sigma * 2 - sigma)
     def init(self, data):
         data.sort_values([self.session_key, self.time_key], inplace=True)
         offset_sessions = np.zeros(data[self.session_key].nunique()+1, dtype=np.int32)
         offset_sessions[1:] = data.groupby(self.session_key).size().cumsum()
         np.random.seed(42)
-        self.Wx, self.Wh, self.Wr, self.Wz, self.Whr, self.Whz, self.Bh, self.Br, self.Bz, self.H = [], [], [], [], [], [], [], [], [], []
+        self.Wx, self.Wh, self.Wrz, self.Bh, self.H = [], [], [], [], []
         for i in range(len(self.layers)):
-            self.Wx.append(self.init_weights((self.layers[i-1] if i > 0 else self.n_items, self.layers[i])))
-            self.Wr.append(self.init_weights((self.layers[i-1] if i > 0 else self.n_items, self.layers[i])))
-            self.Wz.append(self.init_weights((self.layers[i-1] if i > 0 else self.n_items, self.layers[i])))
+            m = []
+            m.append(self.init_matrix((self.layers[i-1] if i > 0 else self.n_items, self.layers[i])))
+            m.append(self.init_matrix((self.layers[i-1] if i > 0 else self.n_items, self.layers[i])))
+            m.append(self.init_matrix((self.layers[i-1] if i > 0 else self.n_items, self.layers[i])))
+            self.Wx.append(theano.shared(value=np.hstack(m), borrow=True))
             self.Wh.append(self.init_weights((self.layers[i], self.layers[i])))
-            self.Whr.append(self.init_weights((self.layers[i], self.layers[i])))
-            self.Whz.append(self.init_weights((self.layers[i], self.layers[i])))
-            self.Bh.append(theano.shared(value=np.zeros((self.layers[i],), dtype=theano.config.floatX), borrow=True))
-            self.Br.append(theano.shared(value=np.zeros((self.layers[i],), dtype=theano.config.floatX), borrow=True))
-            self.Bz.append(theano.shared(value=np.zeros((self.layers[i],), dtype=theano.config.floatX), borrow=True))
+            m2 = []
+            m2.append(self.init_matrix((self.layers[i], self.layers[i])))
+            m2.append(self.init_matrix((self.layers[i], self.layers[i])))
+            self.Wrz.append(theano.shared(value=np.hstack(m2), borrow=True))
+            self.Bh.append(theano.shared(value=np.zeros((self.layers[i] * 3,), dtype=theano.config.floatX), borrow=True))
             self.H.append(theano.shared(value=np.zeros((self.batch_size,self.layers[i]), dtype=theano.config.floatX), borrow=True))
         self.Wy = self.init_weights((self.n_items, self.layers[-1]))
         self.By = theano.shared(value=np.zeros((self.n_items,1), dtype=theano.config.floatX), borrow=True)
@@ -174,9 +179,77 @@ class GRU4Rec:
             retain_prob = 1 - drop_p
             X *= srng.binomial(X.shape, p=retain_prob, dtype=theano.config.floatX) / retain_prob
         return X
+    def adam(self, param, grad, updates, sample_idx = None, epsilon = 1e-6):
+        v1 = np.float32(self.decay)
+        v2 = np.float32(1.0 - self.decay)
+        acc = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
+        meang = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
+        countt = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
+        if sample_idx is None:
+            acc_new = v1 * acc + v2 * grad ** 2
+            meang_new = v1 * meang + v2 * grad
+            countt_new = countt + 1
+            updates[acc] = acc_new
+            updates[meang] = meang_new
+            updates[countt] = countt_new
+        else:
+            acc_s = acc[sample_idx]
+            meang_s = meang[sample_idx]
+            countt_s = countt[sample_idx]
+            acc_new = v1 * acc_s + v2 * grad ** 2
+            meang_new = v1 * meang_s + v2 * grad
+            countt_new = countt_s + 1.0
+            updates[acc] = T.set_subtensor(acc_s, acc_new)
+            updates[meang] = T.set_subtensor(meang_s, meang_new)
+            updates[countt] = T.set_subtensor(countt_s, countt_new)
+        return (meang_new / (1 - v1**countt_new)) / (T.sqrt(acc_new / (1 - v1**countt_new)) + epsilon)
+    def adagrad(self, param, grad, updates, sample_idx = None, epsilon = 1e-6):
+        acc = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
+        if sample_idx is None:
+            acc_new = acc + grad ** 2
+            updates[acc] = acc_new
+        else:
+            acc_s = acc[sample_idx]
+            acc_new = acc_s + grad ** 2
+            updates[acc] = T.set_subtensor(acc_s, acc_new)
+        gradient_scaling = T.cast(T.sqrt(acc_new + epsilon), theano.config.floatX)
+        return grad / gradient_scaling
+    def adadelta(self, param, grad, updates, sample_idx = None, epsilon = 1e-6):
+        v1 = np.float32(self.decay)
+        v2 = np.float32(1.0 - self.decay)
+        acc = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
+        upd = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
+        if sample_idx is None:
+            acc_new = acc + grad ** 2
+            updates[acc] = acc_new
+            grad = T.sqrt(upd + epsilon) * grad
+            upd_new = v1 * upd + v2 * grad ** 2
+            updates[upd] = upd_new
+        else:
+            acc_s = acc[sample_idx]
+            acc_new = acc_s + grad ** 2
+            updates[acc] = T.set_subtensor(acc_s, acc_new)
+            upd_s = upd[sample_idx]
+            upd_new = v1 * upd_s + v2 * grad ** 2
+            updates[upd] = T.set_subtensor(upd_s, upd_new)
+            grad = T.sqrt(upd_s + epsilon) * grad
+        gradient_scaling = T.cast(T.sqrt(acc_new + epsilon), theano.config.floatX)
+        return grad / gradient_scaling
+    def rmsprop(self, param, grad, updates, sample_idx = None, epsilon = 1e-6):
+        v1 = np.float32(self.decay)
+        v2 = np.float32(1.0 - self.decay)
+        acc = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
+        if sample_idx is None:
+            acc_new = v1 * acc + v2 * grad ** 2
+            updates[acc] = acc_new
+        else:
+            acc_s = acc[sample_idx]
+            acc_new = v1 * acc_s + v2 * grad ** 2
+            updates[acc] = T.set_subtensor(acc_s, acc_new)
+        gradient_scaling = T.cast(T.sqrt(acc_new + epsilon), theano.config.floatX)
+        return grad / gradient_scaling
+
     def RMSprop(self, cost, params, full_params, sampled_params, sidxs, epsilon=1e-6):
-        v1 = np.float32(self.decay if self.adapt == 'rmsprop' else 1)
-        v2 = np.float32((1.0 - self.decay) if self.adapt == 'rmsprop' else 1)
         grads =  [T.grad(cost = cost, wrt = param) for param in params]
         sgrads = [T.grad(cost = cost, wrt = sparam) for sparam in sampled_params]
         updates = OrderedDict()
@@ -187,11 +260,14 @@ class GRU4Rec:
         for p_list, g_list in zip(params, grads):
             for p, g in zip(p_list, g_list):
                 if self.adapt:
-                    acc = theano.shared(p.get_value(borrow=False) * 0., borrow=True)
-                    acc_new = v1 * acc + v2 * g ** 2
-                    gradient_scaling = T.cast(T.sqrt(acc_new + epsilon), theano.config.floatX)
-                    g = g / gradient_scaling
-                    updates[acc] = acc_new
+                    if self.adapt == 'adagrad':
+                        g = self.adagrad(p, g, updates)
+                    if self.adapt == 'rmsprop':
+                        g = self.rmsprop(p, g, updates)
+                    if self.adapt == 'adadelta':
+                        g = self.adadelta(p, g, updates)
+                    if self.adapt == 'adam':
+                        g = self.adam(p, g, updates)
                 if self.momentum > 0:
                     velocity = theano.shared(p.get_value(borrow=False) * 0., borrow=True)
                     velocity2 = self.momentum * velocity - np.float32(self.learning_rate) * (g + self.lmbd * p)
@@ -205,12 +281,14 @@ class GRU4Rec:
             sample_idx = sidxs[i]
             sparam = sampled_params[i]
             if self.adapt:
-                acc = theano.shared(fullP.get_value(borrow=False) * 0., borrow=True)
-                acc_s = acc[sample_idx]
-                acc_new = v1 * acc_s + v2 * g ** 2
-                gradient_scaling = T.cast(T.sqrt(acc_new + epsilon), theano.config.floatX)
-                g = g / gradient_scaling
-                updates[acc] = T.set_subtensor(acc_s, acc_new)
+                if self.adapt == 'adagrad':
+                    g = self.adagrad(fullP, g, updates, sample_idx)
+                if self.adapt == 'rmsprop':
+                    g = self.rmsprop(fullP, g, updates, sample_idx)
+                if self.adapt == 'adadelta':
+                    g = self.adadelta(fullP, g, updates, sample_idx)
+                if self.adapt == 'adam':
+                    g = self.adam(fullP, g, updates, sample_idx)
             if self.lmbd > 0:
                 delta = np.float32(self.learning_rate) * (g + self.lmbd * sparam)
             else:
@@ -224,58 +302,43 @@ class GRU4Rec:
             else:
                 updates[fullP] = T.inc_subtensor(sparam, - delta)
         return updates
-    def model(self, X, H, Y, drop_p_hidden):
-        Sx = self.Wx[0][X]
-        Sr = self.Wr[0][X]
-        Sz = self.Wz[0][X]
-        r = T.nnet.sigmoid(Sr + T.dot(H[0], self.Whr[0]) + self.Br[0])
-        h = self.hidden_activation(Sx + T.dot(H[0] * r, self.Wh[0]) + self.Bh[0])
-        z = T.nnet.sigmoid(Sz + T.dot(H[0], self.Whz[0]) + self.Bz[0])
+    def model(self, X, H, Y=None, drop_p_hidden=0.0):
+        Sx = self.Wx[0][X] #TODO
+        vec = Sx + self.Bh[0]
+        rz = T.nnet.sigmoid(vec.T[self.layers[0]:] + T.dot(H[0], self.Wrz[0]).T)
+        h = self.hidden_activation(T.dot(H[0] * rz[:self.layers[0]].T, self.Wh[0]) + vec.T[:self.layers[0]].T) #CHK
+        z = rz[self.layers[0]:].T
         h = (1.0-z)*H[0] + z*h
         h = self.dropout(h, drop_p_hidden)
         H_new = [h]
         y = h
         for i in range(1, len(self.layers)):
-            r = T.nnet.sigmoid(T.dot(y, self.Wr[i]) + T.dot(H[i], self.Whr[i]) + self.Br[i])
-            h = self.hidden_activation(T.dot(y, self.Wx[i]) + T.dot(H[i]*r, self.Wh[i]) + self.Bh[i])
-            z = T.nnet.sigmoid(T.dot(y, self.Wz[i]) + T.dot(H[i], self.Whz[i]) + self.Bz[i])
+            vec = T.dot(y, self.Wx[i]) + self.Bh[i]
+            rz = T.nnet.sigmoid(vec.T[self.layers[i]:] + T.dot(H[i], self.Wrz[i]).T)
+            h = self.hidden_activation(T.dot(H[i] * rz[:self.layers[i]].T, self.Wh[i]) + vec.T[:self.layers[i]].T) #CHK
+            z = rz[self.layers[i]:].T
             h = (1.0-z)*H[i] + z*h
             h = self.dropout(h, drop_p_hidden)
             H_new.append(h)
             y = h
-        Sy = self.Wy[Y]
-        SBy = self.By[Y]
-        y = self.final_activation(T.dot(y, Sy.T) + SBy.flatten())
-        return H_new, y, [Sx, Sr, Sz, Sy, SBy]
-    def model_test(self, X, H):
-        Sx = self.Wx[0][X]
-        Sr = self.Wr[0][X]
-        Sz = self.Wz[0][X]
-        r = T.nnet.sigmoid(Sr + T.dot(H[0], self.Whr[0]) + self.Br[0])
-        h = self.hidden_activation(Sx + T.dot(H[0] * r, self.Wh[0]) + self.Bh[0])
-        z = T.nnet.sigmoid(Sz + T.dot(H[0], self.Whz[0]) + self.Bz[0])
-        h = (1.0-z)*H[0] + z*h
-        H_new = [h]
-        y = h
-        for i in range(1, len(self.layers)):
-            r = T.nnet.sigmoid(T.dot(y, self.Wr[i]) + T.dot(H[i], self.Whr[i]) + self.Br[i])
-            h = self.hidden_activation(T.dot(y, self.Wx[i]) + T.dot(H[i]*r, self.Wh[i]) + self.Bh[i])
-            z = T.nnet.sigmoid(T.dot(y, self.Wz[i]) + T.dot(H[i], self.Whz[i]) + self.Bz[i])
-            h = (1.0-z)*H[i] + z*h
-            H_new.append(h)
-            y = h
-        y = self.final_activation(T.dot(y, self.Wy.T) + self.By.flatten())
-        return H_new, y
+        if Y is not None:
+            Sy = self.Wy[Y]
+            SBy = self.By[Y]
+            y = self.final_activation(T.dot(y, Sy.T) + SBy.flatten())
+            return H_new, y, [Sx, Sy, SBy]
+        else:
+            y = self.final_activation(T.dot(y, self.Wy.T) + self.By.flatten())
+            return H_new, y, [Sx]
     def fit(self, data):
-        ''' 
+        '''
         Trains the network.
-        
+
         Parameters
         --------
         data: pandas.DataFrame
             Training data. It contains the transactions of the sessions. It has one column for session IDs, one for item IDs and one for the timestamp of the events (unix timestamps).
             It must have a header. Column names are arbitrary, but must correspond to the ones you set during the initialization of the network (session_key, item_key, time_key properties).
-            
+
         '''
         self.predict = None
         self.error_during_train = False
@@ -284,20 +347,17 @@ class GRU4Rec:
         self.itemidmap = pd.Series(data=np.arange(self.n_items), index=itemids)
         data = pd.merge(data, pd.DataFrame({self.item_key:itemids, 'ItemIdx':self.itemidmap[itemids].values}), on=self.item_key, how='inner')
         offset_sessions = self.init(data)
-        
         X = T.ivector()
         Y = T.ivector()
         H_new, Y_pred, sampled_params = self.model(X, self.H, Y, self.dropout_p_hidden)
-        cost = self.loss_function(Y_pred) 
-        params = [self.Wx[1:], self.Wr[1:], self.Wz[1:], self.Wh, self.Whr, self.Whz, self.Bh, self.Br, self.Bz]
-        full_params = [self.Wx[0], self.Wr[0], self.Wz[0], self.Wy, self.By]
-        sidxs = [X, X, X, Y, Y]
-        updates = self.RMSprop(cost, params, full_params, sampled_params, sidxs)  
+        cost = self.loss_function(Y_pred)
+        params = [self.Wx[1:], self.Wh, self.Wrz, self.Bh]
+        full_params = [self.Wx[0], self.Wy, self.By]
+        sidxs = [X, Y, Y]
+        updates = self.RMSprop(cost, params, full_params, sampled_params, sidxs)
         for i in range(len(self.H)):
             updates[self.H[i]] = H_new[i]
         train_function = function(inputs=[X, Y], outputs=cost, updates=updates, allow_input_downcast=True)
-        
-        
         for epoch in range(self.n_epochs):
             for i in range(len(self.layers)):
                 self.H[i].set_value(np.zeros((self.batch_size,self.layers[i]), dtype=theano.config.floatX), borrow=True)
@@ -342,14 +402,13 @@ class GRU4Rec:
                 self.error_during_train = True
                 return
             print('Epoch{}\tloss: {:.6f}'.format(epoch, avgc))
-
     def predict_next_batch(self, session_ids, input_item_ids, predict_for_item_ids=None, batch=100):
         '''
         Gives predicton scores for a selected set of items. Can be used in batch mode to predict for multiple independent events (i.e. events of different sessions) at once and thus speed up evaluation.
-        
+
         If the session ID at a given coordinate of the session_ids parameter remains the same during subsequent calls of the function, the corresponding hidden state of the network will be kept intact (i.e. that's how one can predict an item to a session).
         If it changes, the hidden state of the network is reset to zeros.
-                
+
         Parameters
         --------
         session_ids : 1D array
@@ -360,13 +419,13 @@ class GRU4Rec:
             IDs of items for which the network should give prediction scores. Every ID must be in the training set. The default value is None, which means that the network gives prediction on its every output (i.e. for all items in the training set).
         batch : int
             Prediction batch size.
-            
+
         Returns
         --------
         out : pandas.DataFrame
-            Prediction scores for selected items for every event of the batch. 
+            Prediction scores for selected items for every event of the batch.
             Columns: events of the batch; rows: items. Rows are indexed by the item IDs.
-        
+
         '''
         if self.error_during_train: raise Exception
         if self.predict is None or self.predict_batch!=batch:
@@ -375,9 +434,9 @@ class GRU4Rec:
             for i in range(len(self.layers)):
                 self.H[i].set_value(np.zeros((batch,self.layers[i]), dtype=theano.config.floatX), borrow=True)
             if predict_for_item_ids is not None:
-                H_new, yhat, _ = self.model(X, self.H, Y, 0)
+                H_new, yhat, _ = self.model(X, self.H, Y)
             else:
-                H_new, yhat = self.model_test(X, self.H)
+                H_new, yhat, _ = self.model(X, self.H)
             updatesH = OrderedDict()
             for i in range(len(self.H)):
                 updatesH[self.H[i]] = H_new[i]
