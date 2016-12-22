@@ -14,7 +14,7 @@ from collections import OrderedDict
 srng = RandomStreams()
 class GRU4Rec:
     '''
-    GRU4Rec(layers, n_epochs=10, batch_size=50, dropout_p_hidden=0.5, learning_rate=0.05, momentum=0.0, adapt='adagrad', decay=0.9, grad_cap=0, sigma=0, init_as_normal=False, reset_after_session=True, loss='top1', hidden_act='tanh', final_act=None, train_random_order=False, lmbd=0.0, session_key='SessionId', item_key='ItemId', time_key='Time')
+    GRU4Rec(layers, n_epochs=10, batch_size=50, dropout_p_hidden=0.5, learning_rate=0.05, momentum=0.0, adapt='adagrad', decay=0.9, grad_cap=0, sigma=0, init_as_normal=False, reset_after_session=True, loss='top1', hidden_act='tanh', final_act=None, train_random_order=False, lmbd=0.0, session_key='SessionId', item_key='ItemId', time_key='Time', n_sample=0, sample_alpha=0.75)
     Initializes the network.
 
     Parameters
@@ -60,11 +60,16 @@ class GRU4Rec:
         header of the item ID column in the input file (default: 'ItemId')
     time_key : string
         header of the timestamp column in the input file (default: 'Time')
+    n_sample : int
+        number of additional negative samples to be used (besides the other examples of the minibatch) (default: 0)
+    sample_alpha : float
+        the probability of an item used as an additional negative sample is supp^sample_alpha (default: 0.75)
+        (e.g.: sample_alpha=1 --> popularity based sampling; sample_alpha=0 --> uniform sampling)
 
     '''
     def __init__(self, layers, n_epochs=10, batch_size=50, dropout_p_hidden=0.5, learning_rate=0.05, momentum=0.0, adapt='adagrad', decay=0.9, grad_cap=0, sigma=0,
                  init_as_normal=False, reset_after_session=True, loss='top1', hidden_act='tanh', final_act=None, train_random_order=False, lmbd=0.0,
-                 session_key='SessionId', item_key='ItemId', time_key='Time'):
+                 session_key='SessionId', item_key='ItemId', time_key='Time', n_sample=0, sample_alpha=0.75):
         self.layers = layers
         self.n_epochs = n_epochs
         self.batch_size = batch_size
@@ -113,6 +118,8 @@ class GRU4Rec:
         if hidden_act=='relu': self.hidden_activation=self.relu
         elif hidden_act=='tanh': self.hidden_activation=self.tanh
         else: raise NotImplementedError
+        self.n_sample = n_sample
+        self.sample_alpha = sample_alpha
     ######################ACTIVATION FUNCTIONS#####################
     def linear(self,X):
         return X
@@ -131,7 +138,7 @@ class GRU4Rec:
         return T.nnet.sigmoid(X)
     #################################LOSS FUNCTIONS################################
     def cross_entropy(self, yhat):
-        return T.cast(T.mean(-T.log(T.diag(yhat))), theano.config.floatX)
+        return T.cast(T.mean(-T.log(T.diag(yhat)+1e-24)), theano.config.floatX)
     def bpr(self, yhat):
         return T.cast(T.mean(-T.log(T.nnet.sigmoid(T.diag(yhat)-yhat.T))), theano.config.floatX)
     def top1(self, yhat):
@@ -337,7 +344,15 @@ class GRU4Rec:
         else:
             y = self.final_activation(T.dot(y, self.Wy.T) + self.By.flatten())
             return H_new, y, [Sx]
-    def fit(self, data, retrain=False):
+    def generate_neg_samples(self, pop, length):
+        if self.sample_alpha:
+            sample = np.searchsorted(pop, np.random.rand(self.n_sample *  length))
+        else:
+            sample = np.random.choice(self.n_items, size=self.n_sample * length)
+        if length > 1:
+            sample = sample.reshape((length, self.n_sample))
+        return sample
+    def fit(self, data, retrain=False, sample_store=10000000):
         '''
         Trains the network.
 
@@ -348,6 +363,10 @@ class GRU4Rec:
             It must have a header. Column names are arbitrary, but must correspond to the ones you set during the initialization of the network (session_key, item_key, time_key properties).
         retrain : boolean
             If False, do normal train. If True, do additional train (weigths from previous trainings are kept as the initial network) (default: False)
+        sample_store : int
+            If additional negative samples are used (n_sample > 0), the efficiency of GPU utilization can be sped up, by precomputing a large batch of negative samples (and recomputing when necessary).
+            This parameter regulizes the size of this precomputed ID set. Its value is the maximum number of int values (IDs) to be stored. Precomputed IDs are stored in the RAM.
+            For the most efficient computation, a balance must be found between storing few examples and constantly interrupting GPU computations for a short time vs. computing many examples and interrupting GPU computations for a long time (but rarely).
 
         '''
         self.predict = None
@@ -383,6 +402,21 @@ class GRU4Rec:
         for i in range(len(self.H)):
             updates[self.H[i]] = H_new[i]
         train_function = function(inputs=[X, Y], outputs=cost, updates=updates, allow_input_downcast=True)
+        if self.n_sample:
+            pop = data.groupby('ItemId').size()
+            pop = pop[self.itemidmap.index.values].values**self.sample_alpha
+            pop = pop.cumsum() / pop.sum()
+            if sample_store:
+                generate_length = sample_store // self.n_sample
+                if generate_length <= 1:
+                    sample_store = 0
+                    print('No example store was used')
+                else:
+                    neg_samples = self.generate_neg_samples(pop, generate_length)
+                    sample_pointer = 0
+                    print('Created sample store with {} batches of samples'.format(generate_length))
+            else:
+                print('No example store was used')
         for epoch in range(self.n_epochs):
             for i in range(len(self.layers)):
                 self.H[i].set_value(np.zeros((self.batch_size,self.layers[i]), dtype=theano.config.floatX), borrow=True)
@@ -399,7 +433,18 @@ class GRU4Rec:
                 for i in range(minlen-1):
                     in_idx = out_idx
                     out_idx = data.ItemIdx.values[start+i+1]
-                    y = out_idx
+                    if self.n_sample:
+                        if sample_store:
+                            if sample_pointer == generate_length:
+                                neg_samples = self.generate_neg_samples(pop, generate_length)
+                                sample_pointer = 0
+                            sample = neg_samples[sample_pointer]
+                            sample_pointer += 1
+                        else:
+                            sample = self.generate_neg_samples(pop, 1)
+                        y = np.hstack([out_idx, sample])
+                    else:
+                        y = out_idx
                     cost = train_function(in_idx, y)
                     c.append(cost)
                     if np.isnan(cost):
@@ -413,14 +458,14 @@ class GRU4Rec:
                     if maxiter >= len(offset_sessions)-1:
                         finished = True
                         break
-                    if self.reset_after_session:
-                        for i in range(len(self.H)):
-                            tmp = self.H[i].get_value(borrow=True, return_internal_type=True)
-                            tmp[idx,:] = 0
-                            self.H[i].set_value(tmp, borrow=True)
                     iters[idx] = maxiter
                     start[idx] = offset_sessions[session_idx_arr[maxiter]]
                     end[idx] = offset_sessions[session_idx_arr[maxiter]+1]
+                if len(mask) and self.reset_after_session:
+                    for i in range(len(self.H)):
+                        tmp = self.H[i].get_value(borrow=True)
+                        tmp[mask] = 0
+                        self.H[i].set_value(tmp, borrow=True)
             avgc = np.mean(c)
             if np.isnan(avgc):
                 print('Epoch {}: NaN error!'.format(str(epoch)))
