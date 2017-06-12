@@ -1,11 +1,17 @@
 # GRU4Rec
 
 Basic implementation of the algorithm of "Session-based Recommendations With Recurrent Neural Networks". See paper: http://arxiv.org/abs/1511.06939
+With the extensions introduced in "Recurrent Neural Networks with Top-k Gains for Session-based Recommendations". See paper: http://arxiv.org/abs/
 
 
 ## Requirements
 
 The code is written in Theano under python 3.4. For efficient execution on GPUs, Theano must include the updated version of the GPUIncAdvancedSubtensor1 operator. It is available in Theano-0.8.0.
+
+## Update 13-06-2017
+- Upgraded to the v2.0 version
+- Added BPR-max and TOP1-max losses for cutting edge performance (coupled with additional sampling +30% in recall & MRR over the base results)
+- Sacrificed some speed on CPU for faster GPU execution
 
 ## Update 22-12-2016
 - Fixed cross-entropy unstability. Very small predicted scores were rounded to 0 and thus their logarithm became NaN. Added a small epsilon (1e-24) to all scores before computing the logarithm. I got better results with this stabilized cross-entropy than with the TOP1 loss on networks with 100 hidden units.

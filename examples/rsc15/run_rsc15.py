@@ -24,7 +24,7 @@ if __name__ == '__main__':
     
     print('Training GRU4Rec with 100 hidden units')    
     
-    gru = gru4rec.GRU4Rec(layers=[100], loss='top1', batch_size=50, dropout_p_hidden=0.5, learning_rate=0.01, momentum=0.0, time_sort=False)
+    gru = gru4rec.GRU4Rec(loss='top1', final_act='tanh', hidden_act='tanh', layers=[100], batch_size=50, dropout_p_hidden=0.5, learning_rate=0.01, momentum=0.0, time_sort=False)
     gru.fit(data)
     
     res = evaluation.evaluate_sessions_batch(gru, valid, None)
@@ -36,7 +36,7 @@ if __name__ == '__main__':
     
     print('Training GRU4Rec with 100 hidden units')
 
-    gru = gru4rec.GRU4Rec(layers=[100], loss='bpr-max-0.5', batch_size=32, dropout_p_hidden=0.0, learning_rate=0.2, momentum=0.5, n_sample=2048, sample_alpha=0, time_sort=True)
+    gru = gru4rec.GRU4Rec(loss='bpr-max-0.5', final_act='linear', hidden_act='tanh', layers=[100], batch_size=32, dropout_p_hidden=0.0, learning_rate=0.2, momentum=0.5, n_sample=2048, sample_alpha=0, time_sort=True)
     gru.fit(data)
     
     res = evaluation.evaluate_sessions_batch(gru, valid, None)
