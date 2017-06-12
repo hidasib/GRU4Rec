@@ -42,7 +42,7 @@ def evaluate_sessions_batch(pr, test_data, items=None, cut_off=20, batch_size=10
         (Recall@N, MRR@N)
     
     '''
-    pr.predict = None #In case someone would try to run with both items=None and not None on the same model without realizing that the predict function needs to be replaced
+    print('Measuring Recall@{} and MRR@{}'.format(cut_off-1, cut_off-1))
     test_data.sort_values([session_key, time_key], inplace=True)
     offset_sessions = np.zeros(test_data[session_key].nunique()+1, dtype=np.int32)
     offset_sessions[1:] = test_data.groupby(session_key).size().cumsum()
@@ -51,30 +51,31 @@ def evaluate_sessions_batch(pr, test_data, items=None, cut_off=20, batch_size=10
     if len(offset_sessions) - 1 < batch_size:
         batch_size = len(offset_sessions) - 1
     iters = np.arange(batch_size).astype(np.int32)
+    #pos = np.zeros(min(batch_size, len(session_idx_arr))).astype(np.int32)
     maxiter = iters.max()
     start = offset_sessions[iters]
     end = offset_sessions[iters+1]
     in_idx = np.zeros(batch_size, dtype=np.int32)
-    np.random.seed(42)
+    sampled_items = (items is not None)
     while True:
         valid_mask = iters >= 0
         if valid_mask.sum() == 0:
             break
         start_valid = start[valid_mask]
         minlen = (end[valid_mask]-start_valid).min()
-        in_idx[valid_mask] = test_data[item_key].values[start_valid]
+        in_idx[valid_mask] = test_data.ItemId.values[start_valid]
         for i in range(minlen-1):
-            out_idx = test_data[item_key].values[start_valid+i+1]
-            if items is not None:
+            out_idx = test_data.ItemId.values[start_valid+i+1]
+            if sampled_items:
                 uniq_out = np.unique(np.array(out_idx, dtype=np.int32))
                 preds = pr.predict_next_batch(iters, in_idx, np.hstack([items, uniq_out[~np.in1d(uniq_out,items)]]), batch_size)
             else:
-                preds = pr.predict_next_batch(iters, in_idx, None, batch_size)
+                preds = pr.predict_next_batch(iters, in_idx, None, batch_size) #TODO: Handling sampling?
+            preds.fillna(0, inplace=True)
             if break_ties:
                 preds += np.random.rand(*preds.values.shape) * 1e-8
-            preds.fillna(0, inplace=True)
             in_idx[valid_mask] = out_idx
-            if items is not None:
+            if sampled_items:
                 others = preds.ix[items].values.T[valid_mask].T
                 targets = np.diag(preds.ix[in_idx].values)[valid_mask]
                 ranks = (others > targets).sum(axis=0) +1
@@ -84,6 +85,7 @@ def evaluate_sessions_batch(pr, test_data, items=None, cut_off=20, batch_size=10
             recall += rank_ok.sum()
             mrr += (1.0 / ranks[rank_ok]).sum()
             evalutation_point_count += len(ranks)
+            #pos += 1
         start = start+minlen-1
         mask = np.arange(len(iters))[(valid_mask) & (end-start<=1)]
         for idx in mask:
@@ -91,6 +93,7 @@ def evaluate_sessions_batch(pr, test_data, items=None, cut_off=20, batch_size=10
             if maxiter >= len(offset_sessions)-1:
                 iters[idx] = -1
             else:
+                #pos[idx] = 0
                 iters[idx] = maxiter
                 start[idx] = offset_sessions[maxiter]
                 end[idx] = offset_sessions[maxiter+1]
