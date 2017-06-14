@@ -2,7 +2,7 @@
 
 Basic implementation of the algorithm of "Session-based Recommendations With Recurrent Neural Networks". See paper: http://arxiv.org/abs/1511.06939
 
-With the extensions introduced in "Recurrent Neural Networks with Top-k Gains for Session-based Recommendations". See paper: http://arxiv.org/abs/
+With the extensions introduced in "Recurrent Neural Networks with Top-k Gains for Session-based Recommendations". See paper: http://arxiv.org/abs/1706.03847
 
 
 ## Requirements

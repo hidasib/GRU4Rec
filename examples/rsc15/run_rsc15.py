@@ -32,7 +32,7 @@ if __name__ == '__main__':
     print('MRR@20: {}'.format(res[1]))
     
     
-    #Reproducing results from "Recurrent Neural Networks with Top-k Gains for Session-based Recommendations" on RSC15 (http://arxiv.org/abs/)
+    #Reproducing results from "Recurrent Neural Networks with Top-k Gains for Session-based Recommendations" on RSC15 (http://arxiv.org/abs/1706.03847)
     
     print('Training GRU4Rec with 100 hidden units')
 
