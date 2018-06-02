@@ -469,7 +469,7 @@ class GRU4Rec:
         train_function = function(inputs=[X, Y], outputs=cost, updates=updates, allow_input_downcast=True)
         base_order = np.argsort(data.groupby(self.session_key)[self.time_key].min().values) if self.time_sort else np.arange(len(offset_sessions)-1)
         if self.n_sample:
-            pop = data.groupby('ItemId').size()
+            pop = data.groupby(self.item_key).size()
             pop = pop[self.itemidmap.index.values].values**self.sample_alpha
             pop = pop.cumsum() / pop.sum()
             pop[-1] = 1
