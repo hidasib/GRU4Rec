@@ -10,7 +10,7 @@ The code was optimized for GPU execution, running it on CPU is not optimal.
 
 ## Requirements
 
-I advise to use latest Theano version or least Theano-1.0.0. The code was tested with various numpy and pandas versions under python 3.4 and 3.6. Python 2 is not supported.
+I advise to use latest Theano version (Theano-1.0.0 or newer). The code was tested with various numpy and pandas versions under python 3.4 and 3.6. Python 2 is not supported.
 
 ## Update 08-06-2018
 - Refactor and cleaning.
