@@ -1,13 +1,22 @@
 # GRU4Rec
 
-Basic implementation of the algorithm of "Session-based Recommendations With Recurrent Neural Networks". See paper: http://arxiv.org/abs/1511.06939
+Basic implementation of the algorithm of "Session-based Recommendations With Recurrent Neural Networks" (http://arxiv.org/abs/1511.06939). With the extensions introduced in "Recurrent Neural Networks with Top-k Gains for Session-based Recommendations" (http://arxiv.org/abs/1706.03847).
 
-With the extensions introduced in "Recurrent Neural Networks with Top-k Gains for Session-based Recommendations". See paper: http://arxiv.org/abs/1706.03847
+Please always use the latest version as baseline and cite both papers when you do so! Parameters for the Recsys Challenge 2015 (RSC15) dataset can be found in examples/rsc15/run_rsc15.py
 
+The code was optimized for GPU execution, running it on CPU is not optimal.
+
+**LICENSING:** proper licence text coming soon! Meanwhile these are the main guidelines: for research and education purposes the code is and always will be free to use. Use in commercial systems of the code or parts of it requires a licence. If you've been using the code or any of its derivates in a commercial system, contact me.
 
 ## Requirements
 
-The code is written in Theano under python 3.4. For efficient execution on GPUs, Theano must include the updated version of the GPUIncAdvancedSubtensor1 operator. It is available in Theano-0.8.0.
+I advise to use latest Theano version or least Theano-1.0.0. The code was tested with various numpy and pandas versions under python 3.4 and 3.6. Python 2 is not supported.
+
+## Update 08-06-2018
+- Refactor and cleaning.
+- Speeding up execution.
+- Ease of life improvements.
+- Code for evaluating on GPU.
 
 ## Update 13-06-2017
 - Upgraded to the v2.0 version
