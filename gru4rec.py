@@ -507,7 +507,7 @@ class GRU4Rec:
         data = pd.merge(data, pd.DataFrame({self.item_key:itemids, 'ItemIdx':self.itemidmap[itemids].values}), on=self.item_key, how='inner')
         offset_sessions = self.init(data)
         if self.n_sample:
-            pop = data.groupby('ItemId').size()
+            pop = data.groupby(self.item_key).size()
             pop = pop[self.itemidmap.index.values].values**self.sample_alpha
             pop = pop.cumsum() / pop.sum()
             pop[-1] = 1

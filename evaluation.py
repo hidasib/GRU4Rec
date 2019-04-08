@@ -7,7 +7,6 @@ Created on Fri Jun 26 17:27:26 2015
 
 import numpy as np
 import pandas as pd
-from collections import OrderedDict
 import theano
 from theano import tensor as T
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
@@ -172,7 +171,6 @@ def evaluate_gpu(gru, test_data, items=None, session_key='SessionId', item_key='
         valid_mask = (iters < len(offset_sessions)-1)
         n_valid = valid_mask.sum()
         if n_valid == 0:
-            finished = True
             break
         mask = finished_mask & valid_mask
         sessions = iters[mask]
