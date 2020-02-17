@@ -6,7 +6,7 @@ Please always use the latest version as baseline and cite both papers when you d
 
 The code was optimized for GPU execution, running it on CPU is not optimal.
 
-**LICENSING:** proper licence text coming soon! Meanwhile these are the main guidelines: for research and education purposes the code is and always will be free to use. Use in commercial systems of the code or parts of it requires a licence. If you've been using the code or any of its derivates in a commercial system, contact me.
+**LICENSING:** See license.txt for details. Main guidelines: for research and education purposes the code is and always will be free to use. Use in commercial systems of the code or parts of it requires a licence. If you've been using the code or any of its derivates in a commercial system, contact me.
 
 ## Requirements
 
