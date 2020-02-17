@@ -1,0 +1,25 @@
+© Copyright 2015-2020, Balázs Hidasi and Gravity Research & Development Zrt. All rights reserved.
+
+Use and redistribution in source or binary forms for research and educational purposes, with or without modification, are permitted provided that the following conditions are met:
+•	Redistributions of the source code must retain the above copyright notice, this list of conditions, the following disclaimer and appendix. Redistributions in binary form must reproduce the above copyright notice, this list of conditions, the following disclaimer and appendix in the documentation and/or other materials provided with the distribution.
+•	The scientific papers that describe the algorithm (see: [1] and [2]) must be cited in the published research / educational material that uses this code.
+•	Non-commercial use only. Commercial use (including, but not limited to selling the distribution (with or without modifications), using it in commercial systems or for other commercial gain) requires a specific prior written permission from the copyright holders.
+•	The names of the copyright holders must not be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS “AS IS” AND WITHOUT ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+APPENDIX
+
+I. Papers to cite
+[1] Balázs Hidasi, Alexandros Karatzoglou, Linas Baltrunas, Domonkos Tikk: Session-based Recommendations with Recurrent Neural Networks. arXiv preprint arXiv:1511.06939, 2015. https://arxiv.org/abs/1511.06939 Presented at the 4th International Conference on Learning Representations, ICLR 2016.
+[2] Balázs Hidasi, Alexandros Karatzoglou: Recurrent Neural Networks with Top-k Gains for Session-based Recommendations. arXiv preprint arXiv:1706.03847, 2017. https://arxiv.org/abs/1706.03847
+
+II. Getting permission for commercial use
+•	Contact the copyright holders via email at “licensing-gru4rec <AT> yusp <DOT> com”.
+•	Provide details of the planned use (e.g.: who are you, which company do you represent (if any), how do you intend to use the software, for how long, and any other details that you deem important).
+•	You will be notified via email whether your request is approved or not. If the request is approved, you will be presented with an offer for the license fee.
+•	A license agreement will be sent to you after the license fee is paid.
+
+III. Requirements
+The source code requires certain open source libraries to run. These libraries are not included in the repository. You are responsible for obtaining these libraries.
