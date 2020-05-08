@@ -4,21 +4,31 @@ Created on Mon Jun 22 15:14:20 2015
 @author: Balázs Hidasi
 """
 
+import os
+import os.path
+orig_cwd = os.getcwd()
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+os.environ['THEANORC'] = '.theanorc_gru4rec' #Only affects the actual settings if theano was not imported before this point (by any module)
+import custom_opt
+import datatools
 import theano
 from theano import tensor as T
 from theano import function
 from theano.sandbox.rng_mrg import MRG_RandomStreams
+from gpu_ops import gpu_diag, gpu_searchsorted
+os.chdir(orig_cwd)
 import numpy as np
 import pandas as pd
+import pickle
+import time
 from collections import OrderedDict
 mrng = MRG_RandomStreams()
-from gpu_ops import gpu_diag_wide
 
 class GRU4Rec:
     '''
     GRU4Rec(loss='bpr-max', final_act='elu-1', hidden_act='tanh', layers=[100],
                  n_epochs=10, batch_size=32, dropout_p_hidden=0.0, dropout_p_embed=0.0, learning_rate=0.1, momentum=0.0, lmbd=0.0, embedding=0, n_sample=2048, sample_alpha=0.75, smoothing=0.0, constrained_embedding=False,
-                 adapt='adagrad', adapt_params=[], grad_cap=0.0, bpreg=1.0,
+                 adapt='adagrad', adapt_params=[], grad_cap=0.0, bpreg=1.0, logq=1.0,
                  sigma=0.0, init_as_normal=False, train_random_order=False, time_sort=True,
                  session_key='SessionId', item_key='ItemId', time_key='Time')
     Initializes the network.
@@ -66,6 +76,8 @@ class GRU4Rec:
         clip gradients that exceede this value to this value, 0 means no clipping (default: 0.0)
     bpreg : float
         score regularization coefficient for the BPR-max loss function (default: 1.0)
+    logq : float
+        logq normalization of negative samples (set between 0.0 and 1.0), usually useful with cross-entropy loss (default: 0.0)
     sigma : float
         "width" of initialization; either the standard deviation or the min/max of the init interval (with normal and uniform initializations respectively); 0 means adaptive normalization (sigma depends on the size of the weight matrix); (default: 0.0)
     init_as_normal : boolean
@@ -84,7 +96,7 @@ class GRU4Rec:
     '''
     def __init__(self, loss='bpr-max', final_act='linear', hidden_act='tanh', layers=[100],
                  n_epochs=10, batch_size=32, dropout_p_hidden=0.0, dropout_p_embed=0.0, learning_rate=0.1, momentum=0.0, lmbd=0.0, embedding=0, n_sample=2048, sample_alpha=0.75, smoothing=0.0, constrained_embedding=False,
-                 adapt='adagrad', adapt_params=[], grad_cap=0.0, bpreg=1.0,
+                 adapt='adagrad', adapt_params=[], grad_cap=0.0, bpreg=1.0, logq=0.0,
                  sigma=0.0, init_as_normal=False, train_random_order=False, time_sort=True,
                  session_key='SessionId', item_key='ItemId', time_key='Time'):
         self.layers = layers
@@ -102,6 +114,7 @@ class GRU4Rec:
         self.time_key = time_key
         self.grad_cap = grad_cap
         self.bpreg = bpreg
+        self.logq = logq
         self.train_random_order = train_random_order
         self.lmbd = lmbd
         self.embedding = embedding
@@ -122,8 +135,7 @@ class GRU4Rec:
         elif loss == 'bpr': self.loss_function = self.bpr
         elif loss == 'bpr-max': self.loss_function = self.bpr_max
         elif loss == 'top1': self.loss_function = self.top1
-        elif loss == 'top1-max':
-            self.loss_function = self.top1_max
+        elif loss == 'top1-max': self.loss_function = self.top1_max
         elif loss == 'xe_logit': self.loss_function = self.cross_entropy_logits
         else: raise NotImplementedError
     def set_final_activation(self, final_act):
@@ -145,16 +157,16 @@ class GRU4Rec:
         elif hidden_act.startswith('selu-'): self.hidden_activation = self.Selu(*[float(x) for x in hidden_act.split('-')[1:]]).execute
         else: raise NotImplementedError
     def set_params(self, **kvargs):
-        maxk_len = np.max([len(x) for x in kvargs.keys()])
-        maxv_len = np.max([len(x) for x in kvargs.values()])
+        maxk_len = np.max([len(str(x)) for x in kvargs.keys()])
+        maxv_len = np.max([len(str(x)) for x in kvargs.values()])
         for k,v in kvargs.items():
             if not hasattr(self, k):
                 print('Unkown attribute: {}'.format(k))
                 raise NotImplementedError
             else:
-                if k == 'adapt_params': v = [float(l) for l in v.split('/')]
-                elif type(getattr(self, k)) == list: v = [int(l) for l in v.split('/')]
-                if type(getattr(self, k)) == bool:
+                if type(v) == str and k == 'adapt_params': v = [float(l) for l in v.split('/')]
+                elif type(v) == str and type(getattr(self, k)) == list: v = [int(l) for l in v.split('/')]
+                if type(v) == str and type(getattr(self, k)) == bool:
                     if v == 'True' or v == '1': v = True
                     elif v == 'False' or v == '0': v = False
                     else:
@@ -171,16 +183,16 @@ class GRU4Rec:
     def tanh(self,X):
         return T.tanh(X)
     def softmax(self,X):
-        e_x = T.exp(X - X.max(axis=1).dimshuffle(0, 'x'))
-        return e_x / e_x.sum(axis=1).dimshuffle(0, 'x')
+        e_x = T.exp(X - X.max(axis=1, keepdims=True))
+        return e_x / e_x.sum(axis=1, keepdims=True)
     def softmax_logit(self, X):
-        X = X - X.max(axis=1).dimshuffle(0, 'x')
-        return T.log(T.exp(X).sum(axis=1).dimshuffle(0, 'x')) - X
+        X = X - X.max(axis=1, keepdims=True)
+        return T.log(T.exp(X).sum(axis=1, keepdims=True)) - X
     def softmax_neg(self, X):
         hm = 1.0 - T.eye(*X.shape)
         X = X * hm
-        e_x = T.exp(X - X.max(axis=1).dimshuffle(0, 'x')) * hm
-        return e_x / e_x.sum(axis=1).dimshuffle(0, 'x')
+        e_x = T.exp(X - X.max(axis=1, keepdims=True)) * hm
+        return e_x / e_x.sum(axis=1, keepdims=True)
     def relu(self,X):
         return T.maximum(X, 0)
     def sigmoid(self, X):
@@ -205,27 +217,27 @@ class GRU4Rec:
     def cross_entropy(self, yhat, M):
         if self.smoothing:
             n_out = M + self.n_sample
-            return T.cast(T.mean((1.0-(n_out/(n_out-1))*self.smoothing) * (-T.log(gpu_diag_wide(yhat)+1e-24)) + (self.smoothing/(n_out-1)) * T.sum(-T.log(yhat+1e-24), axis=1)), theano.config.floatX)
+            return T.cast(T.sum((1.0-(n_out/(n_out-1))*self.smoothing) * (-T.log(gpu_diag(yhat)+1e-24)) + (self.smoothing/(n_out-1)) * T.sum(-T.log(yhat+1e-24), axis=1)), theano.config.floatX)
         else:
-            return T.cast(T.mean(-T.log(gpu_diag_wide(yhat)+1e-24)), theano.config.floatX)
+            return T.cast(T.sum(-T.log(gpu_diag(yhat)+1e-24)), theano.config.floatX)
     def cross_entropy_logits(self, yhat, M):
         if self.smoothing:
             n_out = M + self.n_sample
-            return T.cast(T.mean((1.0-(n_out/(n_out-1))*self.smoothing) * gpu_diag_wide(yhat) + (self.smoothing/(n_out-1)) * T.sum(yhat, axis=1)), theano.config.floatX)
+            return T.cast(T.sum((1.0-(n_out/(n_out-1))*self.smoothing) * gpu_diag(yhat) + (self.smoothing/(n_out-1)) * T.sum(yhat, axis=1)), theano.config.floatX)
         else:
-            return T.cast(T.mean(gpu_diag_wide(yhat)), theano.config.floatX)
+            return T.cast(T.sum(gpu_diag(yhat)), theano.config.floatX)
     def bpr(self, yhat, M):
-        return T.cast(T.mean(-T.log(T.nnet.sigmoid(gpu_diag_wide(yhat).dimshuffle((0, 'x'))-yhat))), theano.config.floatX)
+        return T.cast(T.sum(-T.log(T.nnet.sigmoid(gpu_diag(yhat, keepdims=True)-yhat))), theano.config.floatX)
     def bpr_max(self, yhat, M):
         softmax_scores = self.softmax_neg(yhat)
-        return T.cast(T.mean(-T.log(T.sum(T.nnet.sigmoid(gpu_diag_wide(yhat).dimshuffle((0,'x'))-yhat)*softmax_scores, axis=1)+1e-24)+self.bpreg*T.sum((yhat**2)*softmax_scores, axis=1)), theano.config.floatX)
+        return T.cast(T.sum(-T.log(T.sum(T.nnet.sigmoid(gpu_diag(yhat, keepdims=True)-yhat)*softmax_scores, axis=1)+1e-24)+self.bpreg*T.sum((yhat**2)*softmax_scores, axis=1)), theano.config.floatX)
     def top1(self, yhat, M):
-        ydiag = gpu_diag_wide(yhat).dimshuffle((0, 'x'))
-        return T.cast(T.mean(T.mean(T.nnet.sigmoid(-ydiag+yhat)+T.nnet.sigmoid(yhat**2), axis=1)-T.nnet.sigmoid(ydiag**2)/(M+self.n_sample)), theano.config.floatX)
+        ydiag = gpu_diag(yhat, keepdims=True)
+        return T.cast(T.sum(T.mean(T.nnet.sigmoid(-ydiag+yhat)+T.nnet.sigmoid(yhat**2), axis=1)-T.nnet.sigmoid(ydiag**2)/(M+self.n_sample)), theano.config.floatX)
     def top1_max(self, yhat, M):
         softmax_scores = self.softmax_neg(yhat)
-        y = softmax_scores*(T.nnet.sigmoid(-gpu_diag_wide(yhat).dimshuffle((0, 'x'))+yhat)+T.nnet.sigmoid(yhat**2))
-        return T.cast(T.mean(T.sum(y, axis=1)), theano.config.floatX)
+        y = softmax_scores*(T.nnet.sigmoid(-gpu_diag(yhat, keepdims=True)+yhat)+T.nnet.sigmoid(yhat**2))
+        return T.cast(T.sum(T.sum(y, axis=1)), theano.config.floatX)
     ###############################################################################
     def floatX(self, X):
         return np.asarray(X, dtype=theano.config.floatX)
@@ -245,9 +257,8 @@ class GRU4Rec:
         else: new_rows = self.floatX(np.random.rand(n_new, matrix.shape[1]) * sigma * 2 - sigma)
         W.set_value(np.vstack([matrix, new_rows]))
     def init(self, data):
-        data.sort_values([self.session_key, self.time_key], inplace=True)
-        offset_sessions = np.zeros(data[self.session_key].nunique()+1, dtype=np.int32)
-        offset_sessions[1:] = data.groupby(self.session_key).size().cumsum()
+        datatools.sort_if_needed(data, [self.session_key, self.time_key])
+        offset_sessions = datatools.compute_offset(data, self.session_key)
         np.random.seed(42)
         self.Wx, self.Wh, self.Wrz, self.Bh, self.H = [], [], [], [], []
         if self.constrained_embedding:
@@ -279,10 +290,10 @@ class GRU4Rec:
             X *= mrng.binomial(X.shape, p=retain_prob, dtype=theano.config.floatX) / retain_prob
         return X
     def adam(self, param, grad, updates, sample_idx = None, epsilon = 1e-6):
-        v1 = np.float32(self.adapt_params[0])
-        v2 = np.float32(1.0 - self.adapt_params[0])
-        v3 = np.float32(self.adapt_params[1])
-        v4 = np.float32(1.0 - self.adapt_params[1])
+        v1 = self.adapt_params[0]
+        v2 = 1.0 - self.adapt_params[0]
+        v3 = self.adapt_params[1]
+        v4 = 1.0 - self.adapt_params[1]
         acc = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
         meang = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
         countt = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
@@ -320,8 +331,8 @@ class GRU4Rec:
         gradient_scaling = T.cast(T.sqrt(acc_new + epsilon), theano.config.floatX)
         return grad / gradient_scaling
     def adadelta(self, param, grad, updates, sample_idx = None, epsilon = 1e-6):
-        v1 = np.float32(self.adapt_params[0])
-        v2 = np.float32(1.0 - self.adapt_params[0])
+        v1 = self.adapt_params[0]
+        v2 = 1.0 - self.adapt_params[0]
         acc = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
         upd = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
         if sample_idx is None:
@@ -346,8 +357,8 @@ class GRU4Rec:
             self.learning_rate = 1.0
         return grad * gradient_scaling #Ok, checked
     def rmsprop(self, param, grad, updates, sample_idx = None, epsilon = 1e-6):
-        v1 = np.float32(self.adapt_params[0])
-        v2 = np.float32(1.0 - self.adapt_params[0])
+        v1 = self.adapt_params[0]
+        v2 = 1.0 - self.adapt_params[0]
         acc = theano.shared(param.get_value(borrow=False) * 0., borrow=True)
         if sample_idx is None:
             acc_new = v1 * acc + v2 * grad ** 2
@@ -380,11 +391,11 @@ class GRU4Rec:
                     g = self.adam(p, g, updates)
                 if self.momentum > 0:
                     velocity = theano.shared(p.get_value(borrow=False) * 0., borrow=True)
-                    velocity2 = self.momentum * velocity - np.float32(self.learning_rate) * (g + self.lmbd * p)
+                    velocity2 = self.momentum * velocity - self.learning_rate * (g + self.lmbd * p)
                     updates[velocity] = velocity2
                     updates[p] = p + velocity2
                 else:
-                    updates[p] = p * np.float32(1.0 - self.learning_rate * self.lmbd) - np.float32(self.learning_rate) * g
+                    updates[p] = p * (1.0 - self.learning_rate * self.lmbd) - self.learning_rate * g
         for i in range(len(sgrads)):
             g = sgrads[i]
             fullP = full_params[i]
@@ -399,9 +410,9 @@ class GRU4Rec:
             elif self.adapt == 'adam':
                 g = self.adam(fullP, g, updates, sample_idx)
             if self.lmbd > 0:
-                delta = np.float32(self.learning_rate) * (g + self.lmbd * sparam)
+                delta = self.learning_rate * (g + self.lmbd * sparam)
             else:
-                delta = np.float32(self.learning_rate) * g
+                delta = self.learning_rate * g
             if self.momentum > 0:
                 velocity = theano.shared(fullP.get_value(borrow=False) * 0., borrow=True)
                 vs = velocity[sample_idx]
@@ -413,6 +424,9 @@ class GRU4Rec:
         return updates
     def model(self, X, H, M, R=None, Y=None, drop_p_hidden=0.0, drop_p_embed=0.0, predict=False):
         sparams, full_params, sidxs = [], [], []
+        if (hasattr(self, 'ST')) and (Y is not None) and (not predict) and (self.n_sample > 0):
+            A = self.ST[self.STI]
+            Y = T.concatenate([Y, A], axis=0)
         if self.constrained_embedding:
             if Y is not None: X = T.concatenate([X,Y], axis=0)
             S = self.Wy[X]
@@ -441,7 +455,7 @@ class GRU4Rec:
             h = (1.0-z)*H[0] + z*h
             h = self.dropout(h, drop_p_hidden)
             y = h
-            H_new = [T.switch(R.dimshuffle((0, 'x')), 0, h) if not predict else h]
+            H_new = [T.switch(R, 0, h) if not predict else h]
             start = 1
             sparams.append(Sx)
             full_params.append(self.Wx[0])
@@ -454,7 +468,7 @@ class GRU4Rec:
             h = (1.0-z)*H[i] + z*h
             h = self.dropout(h, drop_p_hidden)
             y = h
-            H_new.append(T.switch(R.dimshuffle((0, 'x')), 0, h) if not predict else h)
+            H_new.append(T.switch(R, 0, h) if not predict else h)
         if Y is not None:
             if (not self.constrained_embedding) or predict:
                 Sy = self.Wy[Y]
@@ -468,13 +482,19 @@ class GRU4Rec:
             if predict and self.final_act == 'softmax_logit':
                 y = self.softmax(T.dot(y, Sy.T) + SBy.flatten())
             else:
-                y = self.final_activation(T.dot(y, Sy.T) + SBy.flatten())
+                y = T.dot(y, Sy.T) + SBy.flatten()
+                if not predict and self.logq:
+                    y = y - self.logq * T.log(T.concatenate([self.P0[Y[:M]], self.P0[Y[M:]]**self.sample_alpha], axis=0))
+                y = self.final_activation(y)
             return H_new, y, sparams, full_params, sidxs
         else:
             if predict and self.final_act == 'softmax_logit':
                 y = self.softmax(T.dot(y, self.Wy.T) + self.By.flatten())
             else:
-                y = self.final_activation(T.dot(y, self.Wy.T) + self.By.flatten())
+                y = T.dot(y, self.Wy.T) + self.By.flatten()
+                if not predict and self.logq:
+                    y = y - self.logq * T.log(self.P0)
+                y = self.final_activation(y)
             return H_new, y, sparams, full_params, sidxs
     def generate_neg_samples(self, pop, length):
         if self.sample_alpha:
@@ -484,7 +504,7 @@ class GRU4Rec:
         if length > 1:
             sample = sample.reshape((length, self.n_sample))
         return sample
-    def fit(self, data, sample_store=10000000):
+    def fit(self, data, sample_store=10000000, store_type='gpu'):
         '''
         Trains the network.
 
@@ -497,17 +517,21 @@ class GRU4Rec:
             If additional negative samples are used (n_sample > 0), the efficiency of GPU utilization can be sped up, by precomputing a large batch of negative samples (and recomputing when necessary).
             This parameter regulizes the size of this precomputed ID set. Its value is the maximum number of int values (IDs) to be stored. Precomputed IDs are stored in the RAM.
             For the most efficient computation, a balance must be found between storing few examples and constantly interrupting GPU computations for a short time vs. computing many examples and interrupting GPU computations for a long time (but rarely).
+        store_type : 'cpu', 'gpu'
+            Where to store the negative sample buffer (sample store). The cpu mode is legacy and is no longer supported.
 
         '''
         self.predict = None
         self.error_during_train = False
         itemids = data[self.item_key].unique()
         self.n_items = len(itemids)
-        self.itemidmap = pd.Series(data=np.arange(self.n_items), index=itemids)
-        data = pd.merge(data, pd.DataFrame({self.item_key:itemids, 'ItemIdx':self.itemidmap[itemids].values}), on=self.item_key, how='inner')
+        self.itemidmap = pd.Series(data=np.arange(self.n_items), index=itemids, name='ItemIdx')
+        data['ItemIdx'] = self.itemidmap[data[self.item_key].values].values
         offset_sessions = self.init(data)
+        pop = data.groupby(self.item_key).size()
+        if self.logq:
+            self.P0 = theano.shared(pop[self.itemidmap.index.values].values.astype(theano.config.floatX), name='P0', borrow=False)
         if self.n_sample:
-            pop = data.groupby('ItemId').size()
             pop = pop[self.itemidmap.index.values].values**self.sample_alpha
             pop = pop.cumsum() / pop.sum()
             pop[-1] = 1
@@ -516,25 +540,44 @@ class GRU4Rec:
                 if generate_length <= 1:
                     sample_store = 0
                     print('No example store was used')
-                else:
+                elif store_type == 'cpu':
                     neg_samples = self.generate_neg_samples(pop, generate_length)
                     sample_pointer = 0
+                    print('Created sample store with {} batches of samples (type=CPU)'.format(generate_length))
+                elif store_type == 'gpu':
+                    P = theano.shared(pop.astype(theano.config.floatX), name='P')
+                    self.ST = theano.shared(np.zeros((generate_length, self.n_sample), dtype='int64'))
+                    self.STI = theano.shared(np.asarray(0, dtype='int64'))
+                    X = mrng.uniform((generate_length*self.n_sample,))
+                    updates_st = OrderedDict()
+                    updates_st[self.ST] = gpu_searchsorted(P, X, dtype_int64=True).reshape((generate_length, self.n_sample))
+                    updates_st[self.STI] = np.asarray(0, dtype='int64')
+                    generate_samples = theano.function([], updates=updates_st)
+                    generate_samples()
+                    sample_pointer = 0
+                    print('Created sample store with {} batches of samples (type=GPU)'.format(generate_length))
+                else:
+                    print('Invalid store type {}'.format(store_type))
+                    raise NotImplementedError
             else:
                 print('No example store was used')
-        X = T.ivector()
-        Y = T.ivector()
-        M = T.iscalar()
-        R = T.bvector()
+        X = T.ivector(name='X')
+        Y = T.ivector(name='Y')
+        M = T.iscalar(name='M')
+        R = T.bcol(name='R')
         H_new, Y_pred, sparams, full_params, sidxs = self.model(X, self.H, M, R, Y, self.dropout_p_hidden, self.dropout_p_embed)
-        cost = (M/self.batch_size) * self.loss_function(Y_pred, M)
+        cost = self.loss_function(Y_pred, M) / self.batch_size
         params = [self.Wx if self.embedding or self.constrained_embedding else self.Wx[1:], self.Wh, self.Wrz, self.Bh]
         updates = self.RMSprop(cost, params, full_params, sparams, sidxs)
         for i in range(len(self.H)):
             updates[self.H[i]] = H_new[i]
-        train_function = function(inputs=[X, Y, M, R], outputs=cost, updates=updates, allow_input_downcast=True)
+        if hasattr(self, 'STI'):
+            updates[self.STI] = self.STI + 1
+        train_function = function(inputs=[X, Y, M, R], outputs=cost, updates=updates, allow_input_downcast=True, on_unused_input='ignore')
         base_order = np.argsort(data.groupby(self.session_key)[self.time_key].min().values) if self.time_sort else np.arange(len(offset_sessions)-1)
         data_items = data.ItemIdx.values
         for epoch in range(self.n_epochs):
+            t0 = time.time()
             for i in range(len(self.layers)):
                 self.H[i].set_value(np.zeros((self.batch_size,self.layers[i]), dtype=theano.config.floatX), borrow=True)
             c = []
@@ -551,7 +594,7 @@ class GRU4Rec:
                 for i in range(minlen-1):
                     in_idx = out_idx
                     out_idx = data_items[start+i+1]
-                    if self.n_sample:
+                    if self.n_sample and store_type == 'cpu':
                         if sample_store:
                             if sample_pointer == generate_length:
                                 neg_samples = self.generate_neg_samples(pop, generate_length)
@@ -569,7 +612,9 @@ class GRU4Rec:
                                 sample_pointer = 0
                             sample_pointer += 1
                     reset = (start+i+1 == end-1)
-                    cost = train_function(in_idx, y, len(iters), reset)
+                    x = in_idx.astype('int64')
+                    y = y.astype('int64')
+                    cost = train_function(in_idx, y, len(iters), reset.reshape(len(reset), 1))
                     c.append(cost)
                     cc.append(len(iters))
                     if np.isnan(cost):
@@ -605,7 +650,12 @@ class GRU4Rec:
                 print('Epoch {}: NaN error!'.format(str(epoch)))
                 self.error_during_train = True
                 return
-            print('Epoch{}\tloss: {:.6f}'.format(epoch, avgc))
+            t1 = time.time()
+            dt = t1 - t0
+            print('Epoch{} --> loss: {:.6f} \t({:.2f}s) \t[{:.2f} mb/s | {:.0f} e/s]'.format(epoch+1, avgc, dt, len(c)/dt, np.sum(cc)/dt))
+        if hasattr(self, 'ST'):
+            del(self.ST)
+            del(self.STI)
     def predict_next_batch(self, session_ids, input_item_ids, predict_for_item_ids=None, batch=100):
         '''
         Gives predicton scores for a selected set of items. Can be used in batch mode to predict for multiple independent events (i.e. events of different sessions) at once and thus speed up evaluation.
@@ -683,3 +733,43 @@ class GRU4Rec:
         for i in range(len(H)):
             updatesH[H[i]] = H_new[i]
         return yhat, H, updatesH
+    def savemodel(self, fname):
+        #Get model parameters for GPU-CPU compatibility
+        if self.embedding:
+            self.E = self.E.get_value()
+        for i in range(len(self.layers)):
+            self.Wx[i] = self.Wx[i].get_value()
+            self.Wrz[i] = self.Wrz[i].get_value()
+            self.Wh[i] = self.Wh[i].get_value()
+            self.Bh[i] = self.Bh[i].get_value()
+            self.H[i] = self.H[i].get_value()
+        self.Wy = self.Wy.get_value()
+        self.By = self.By.get_value()
+        #Write the model
+        with open(fname, 'wb') as f:
+            pickle.dump(self, f)
+        #Reload the parameters
+        if self.embedding:
+            self.E = theano.shared(self.E, borrow=True, name='E')
+        for i in range(len(self.layers)):
+            self.Wx[i] = theano.shared(self.Wx[i], borrow=True, name='Wx{}'.format(i))
+            self.Wrz[i] = theano.shared(self.Wrz[i], borrow=True, name='Wrz{}'.format(i))
+            self.Wh[i] = theano.shared(self.Wh[i], borrow=True, name='Wh{}'.format(i))
+            self.Bh[i] = theano.shared(self.Bh[i], borrow=True, name='Bh{}'.format(i))
+            self.H[i] = theano.shared(self.H[i], borrow=True, name='H{}'.format(i))
+        self.Wy = theano.shared(self.Wy, borrow=True, name='Wy')
+        self.By = theano.shared(self.By, borrow=True, name='By')
+    @classmethod
+    def loadmodel(cls, fname):
+        gru = pd.read_pickle(fname)
+        if gru.embedding:
+            gru.E = theano.shared(gru.E, borrow=True, name='E')
+        for i in range(len(gru.layers)):
+            gru.Wx[i] = theano.shared(gru.Wx[i], borrow=True, name='Wx{}'.format(i))
+            gru.Wrz[i] = theano.shared(gru.Wrz[i], borrow=True, name='Wrz{}'.format(i))
+            gru.Wh[i] = theano.shared(gru.Wh[i], borrow=True, name='Wh{}'.format(i))
+            gru.Bh[i] = theano.shared(gru.Bh[i], borrow=True, name='Bh{}'.format(i))
+            gru.H[i] = theano.shared(gru.H[i], borrow=True, name='H{}'.format(i))
+        gru.Wy = theano.shared(gru.Wy, borrow=True, name='Wy')
+        gru.By = theano.shared(gru.By, borrow=True, name='By')
+        return gru
