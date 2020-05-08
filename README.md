@@ -10,7 +10,7 @@ Parameters of the experiments on the Recsys Challenge 2015 (RSC15) dataset - tha
 
 You can train and evaluate the model on your own session data easily using `run.py`. Usage information below.
 
-**LICENSING:** See license.txt for details. Main guidelines: for research and education purposes the code is and always will be free to use. Using the code or parts of it in commercial systems requires a licence. If you've been using the code or any of its derivates in a commercial system, contact me!
+**LICENSE:** See [license.txt](license.txt) for details. Main guidelines: for research and education purposes the code is and always will be free to use. Using the code or parts of it in commercial systems requires a licence. If you've been using the code or any of its derivates in a commercial system, contact me!
 
 **CONTENTS:**  
 [Requirements](#requirements "Requirements")  
