@@ -28,7 +28,7 @@ class GRU4Rec:
     '''
     GRU4Rec(loss='bpr-max', final_act='elu-1', hidden_act='tanh', layers=[100],
                  n_epochs=10, batch_size=32, dropout_p_hidden=0.0, dropout_p_embed=0.0, learning_rate=0.1, momentum=0.0, lmbd=0.0, embedding=0, n_sample=2048, sample_alpha=0.75, smoothing=0.0, constrained_embedding=False,
-                 adapt='adagrad', adapt_params=[], grad_cap=0.0, bpreg=1.0, logq=1.0,
+                 adapt='adagrad', adapt_params=[], grad_cap=0.0, bpreg=1.0, logq=0.0,
                  sigma=0.0, init_as_normal=False, train_random_order=False, time_sort=True,
                  session_key='SessionId', item_key='ItemId', time_key='Time')
     Initializes the network.
@@ -612,8 +612,6 @@ class GRU4Rec:
                                 sample_pointer = 0
                             sample_pointer += 1
                     reset = (start+i+1 == end-1)
-                    x = in_idx.astype('int64')
-                    y = y.astype('int64')
                     cost = train_function(in_idx, y, len(iters), reset.reshape(len(reset), 1))
                     c.append(cost)
                     cc.append(len(iters))

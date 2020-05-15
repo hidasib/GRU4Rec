@@ -4,7 +4,6 @@ from theano.gradient import grad_not_implemented
 import theano.tensor as T
 from theano.gpuarray.subtensor import GpuAdvancedSubtensor1
 from theano.scalar import bool as bool_t, int32 as int_t, uint32 as size_t
-from theano.gpuarray.opt import register_opt, register_opt2, op_lifter
 
 try:
     import pygpu
@@ -406,7 +405,6 @@ class GpuBinarySearchSorted(GpuKernelBase, Op):
 
     def c_code_cache_version(self):
         return (1,)
-
 
 class GpuAdvancedSubtensor1_fast(GpuKernelBase, GpuAdvancedSubtensor1):
     """
