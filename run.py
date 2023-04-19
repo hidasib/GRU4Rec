@@ -1,15 +1,11 @@
 import argparse
 import os
+import shutil
 
 class MyHelpFormatter(argparse.HelpFormatter):
     def __init__(self, *args, **kwargs):
         super(MyHelpFormatter, self).__init__(*args, **kwargs)
-        try:
-            columns = int(os.popen('stty size', 'r').read().split()[1])
-        except:
-            columns = None
-        if columns is not None:
-            self._width = columns
+        self._width = shutil.get_terminal_size().columns
 
 parser = argparse.ArgumentParser(formatter_class=MyHelpFormatter, description='Train or load a GRU4Rec model & measure recall and MRR on the specified test set(s).')
 parser.add_argument('path', metavar='PATH', type=str, help='Path to the training data (TAB separated file (.tsv or .txt) or pickled pandas.DataFrame object (.pickle)) (if the --load_model parameter is NOT provided) or to the serialized model (if the --load_model parameter is provided).')
@@ -37,13 +33,13 @@ from collections import OrderedDict
 from gru4rec import GRU4Rec
 import evaluation
 import importlib.util
+import joblib
 os.chdir(orig_cwd)
 
 def load_data(fname, gru):
     if fname.endswith('.pickle'):
         print('Loading data from pickle file: {}'.format(fname))
-        with open(fname, 'rb') as f:
-            data = pickle.load(f)
+        data = joblib.load(fname)
         if gru.session_key not in data.columns:
             print('ERROR. The column specified for session IDs "{}" is not in the data file ({})'.format(gru.session_key, fname))
             print('The default column name is "SessionId", but you can specify otherwise by setting the `session_key` parameter of the model.')
