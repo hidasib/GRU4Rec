@@ -19,6 +19,7 @@ parser.add_argument('-e', '--eval_type', metavar='EVAL_TYPE', choices=['standard
 parser.add_argument('-ss', '--sample_store_size', metavar='SS', type=int, default=10000000, help='GRU4Rec uses a buffer for negative samples during training to maximize GPU utilization. This parameter sets the buffer length. Lower values require more frequent recomputation, higher values use more (GPU) memory. Unless you know what you are doing, you shouldn\'t mess with this parameter. (Default: 10000000)')
 parser.add_argument('--sample_store_on_cpu', action='store_true', help='If provided, the sample store will be stored in the RAM instead of the GPU memory. This is not advised in most cases, because it significantly lowers the GPU utilization. This option is provided if for some reason you want to train the model on the CPU (NOT advised).')
 parser.add_argument('--test_against_items', metavar='N_TEST_ITEMS', type=int, help='It is NOT advised to evaluate recommender algorithms by ranking a single positive item against a set of sampled negatives. It overestimates recommendation performance and also skewes comparisons, as it affects algorithms differently (and if a different sequence of random samples is used, the results are downright uncomparable). If testing takes too much time, it is advised to sample test sessions to create a smaller test set. However, if the number of items is very high (i.e. ABOVE FEW MILLIONS), it might be impossible to evaluate the model within a reasonable time, even on a smaller (but still representative) test set. In this case, and this case only, one can sample items to evaluate against. This option allows to rank the positive item against the N_TEST_ITEMS most popular items. This has a lesser effect on comparison and it is a much stronger criteria than ranking against randomly sampled items. Keep in mind that the real performcance of the algorithm will still be overestimated by the results, but comparison will be mostly fair. If used, you should NEVER SET THIS PARAMETER BELOW 50000 and try to set it as high as possible (for your required evaluation time). (Default: all items are used as negatives for evaluation)')
+parser.add_argument('-g', '--gru4rec_model', metavar='GRFILE', type=str, default='gru4rec', help='Name of the file containing the GRU4Rec class. Can be sued to select different varaiants. (Default: gru4rec)')                                                                                                                                                                                                                        
 args = parser.parse_args()
 
 import os.path
@@ -30,7 +31,8 @@ import datetime as dt
 import sys
 import time
 from collections import OrderedDict
-from gru4rec import GRU4Rec
+import importlib
+GRU4Rec = importlib.import_module(args.gru4rec_model).GRU4Rec
 import evaluation
 import importlib.util
 import joblib
@@ -68,7 +70,7 @@ def load_data(fname, gru):
             print('The default column name is "Time", but you can specify otherwise by setting the `time_key` parameter of the model.')
             sys.exit(1)
         print('Loading data from TAB separated file: {}'.format(fname))
-        data = pd.read_csv(fname, sep='\t', usecols=[gru.session_key, gru.item_key, gru.time_key], dtype={gru.session_key:'int32', gru.item_key:np.str})
+        data = pd.read_csv(fname, sep='\t', usecols=[gru.session_key, gru.item_key, gru.time_key], dtype={gru.session_key:'int32', gru.item_key:'str'})
     return data
 
 if (args.parameter_string is not None) + (args.parameter_file is not None) + (args.load_model) != 1:
