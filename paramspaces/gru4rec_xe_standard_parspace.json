@@ -1,0 +1,7 @@
+{"name":"layers", "dtype":"int", "values":[64,512], "step":32}
+{"name":"batch_size", "dtype":"int", "values":[32, 256], "step":16}
+{"name":"learning_rate", "dtype":"float", "values":[0.01, 0.25], "step":0.005}
+{"name":"dropout_p_embed", "dtype":"float", "values":[0.0, 0.5], "step":0.05}
+{"name":"dropout_p_hidden", "dtype":"float", "values":[0.0, 0.7], "step":0.05}
+{"name":"momentum", "dtype":"float", "values":[0.0, 0.9], "step":0.05}
+{"name":"sample_alpha", "dtype":"float", "values":[0.0, 1.0], "step":0.1}

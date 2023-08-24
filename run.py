@@ -17,9 +17,13 @@ parser.add_argument('-t', '--test', metavar='TEST_PATH', type=str, nargs='+', he
 parser.add_argument('-m', '--measure', metavar='AT', type=int, nargs='+', default=[20], help='Measure recall & MRR at the defined recommendation list length(s). Multiple values can be provided. (Default: 20)')
 parser.add_argument('-e', '--eval_type', metavar='EVAL_TYPE', choices=['standard', 'conservative', 'median', 'tiebreaking'], default='standard', help='Sets how to handle if multiple items in the ranked list have the same prediction score (which is usually due to saturation or an error). See the documentation of evaluate_gpu() in evaluation.py for further details. (Default: standard)')
 parser.add_argument('-ss', '--sample_store_size', metavar='SS', type=int, default=10000000, help='GRU4Rec uses a buffer for negative samples during training to maximize GPU utilization. This parameter sets the buffer length. Lower values require more frequent recomputation, higher values use more (GPU) memory. Unless you know what you are doing, you shouldn\'t mess with this parameter. (Default: 10000000)')
-parser.add_argument('--sample_store_on_cpu', action='store_true', help='If provided, the sample store will be stored in the RAM instead of the GPU memory. This is not advised in most cases, because it significantly lowers the GPU utilization. This option is provided if for some reason you want to train the model on the CPU (NOT advised).')
-parser.add_argument('--test_against_items', metavar='N_TEST_ITEMS', type=int, help='It is NOT advised to evaluate recommender algorithms by ranking a single positive item against a set of sampled negatives. It overestimates recommendation performance and also skewes comparisons, as it affects algorithms differently (and if a different sequence of random samples is used, the results are downright uncomparable). If testing takes too much time, it is advised to sample test sessions to create a smaller test set. However, if the number of items is very high (i.e. ABOVE FEW MILLIONS), it might be impossible to evaluate the model within a reasonable time, even on a smaller (but still representative) test set. In this case, and this case only, one can sample items to evaluate against. This option allows to rank the positive item against the N_TEST_ITEMS most popular items. This has a lesser effect on comparison and it is a much stronger criteria than ranking against randomly sampled items. Keep in mind that the real performcance of the algorithm will still be overestimated by the results, but comparison will be mostly fair. If used, you should NEVER SET THIS PARAMETER BELOW 50000 and try to set it as high as possible (for your required evaluation time). (Default: all items are used as negatives for evaluation)')
-parser.add_argument('-g', '--gru4rec_model', metavar='GRFILE', type=str, default='gru4rec', help='Name of the file containing the GRU4Rec class. Can be used to select different varaiants. (Default: gru4rec)')                                                                                                                                                                                                                        
+parser.add_argument('--sample_store_on_cpu', action='store_true', help='If provided, the sample store will be stored in the RAM instead of the GPU memory. This is not advised in most cases, because it significantly lowers the GPU utilization. This option is provided if for some reason you want to train the model on the CPU (NOT advised). Note that you need to make modifications to the code so that it is able to run on CPU.')
+parser.add_argument('-g', '--gru4rec_model', metavar='GRFILE', type=str, default='gru4rec', help='Name of the file containing the GRU4Rec class. Can be used to select different varaiants. (Default: gru4rec)')
+parser.add_argument('-ik', '--item_key', metavar='IK', type=str, default='ItemId', help='Column name corresponding to the item IDs (detault: ItemId).')
+parser.add_argument('-sk', '--session_key', metavar='SK', type=str, default='SessionId', help='Column name corresponding to the session IDs (default: SessionId).')
+parser.add_argument('-tk', '--time_key', metavar='TK', type=str, default='Time', help='Column name corresponding to the timestamp (default: Time).')
+parser.add_argument('-pm', '--primary_metric', metavar='METRIC', choices=['recall', 'mrr'], default='recall', help='Set primary metric, recall or mrr (e.g. for paropt). (Default: recall)')
+parser.add_argument('-lpm', '--log_primary_metric', action='store_true', help='If provided, evaluation will log the value of the primary metric at the end of the run. Only works with one test file and list length.')
 args = parser.parse_args()
 
 import os.path
@@ -38,39 +42,39 @@ import importlib.util
 import joblib
 os.chdir(orig_cwd)
 
-def load_data(fname, gru):
+def load_data(fname, args):
     if fname.endswith('.pickle'):
         print('Loading data from pickle file: {}'.format(fname))
         data = joblib.load(fname)
-        if gru.session_key not in data.columns:
-            print('ERROR. The column specified for session IDs "{}" is not in the data file ({})'.format(gru.session_key, fname))
+        if args.session_key not in data.columns:
+            print('ERROR. The column specified for session IDs "{}" is not in the data file ({})'.format(args.session_key, fname))
             print('The default column name is "SessionId", but you can specify otherwise by setting the `session_key` parameter of the model.')
             sys.exit(1)
-        if gru.item_key not in data.columns:
-            print('ERROR. The column specified for item IDs "{}" is not in the data file ({})'.format(gru.item_key, fname))
+        if args.item_key not in data.columns:
+            print('ERROR. The column specified for item IDs "{}" is not in the data file ({})'.format(args.item_key, fname))
             print('The default column name is "ItemId", but you can specify otherwise by setting the `item_key` parameter of the model.')
             sys.exit(1)
-        if gru.time_key not in data.columns:
-            print('ERROR. The column specified for time "{}" is not in the data file ({})'.format(gru.time_key, fname))
+        if args.time_key not in data.columns:
+            print('ERROR. The column specified for time "{}" is not in the data file ({})'.format(args.time_key, fname))
             print('The default column name is "Time", but you can specify otherwise by setting the `time_key` parameter of the model.')
             sys.exit(1)
     else:
         with open(fname, 'rt') as f:
             header = f.readline().strip().split('\t')
-        if gru.session_key not in header:
-            print('ERROR. The column specified for session IDs "{}" is not in the data file ({})'.format(gru.session_key, fname))
+        if args.session_key not in header:
+            print('ERROR. The column specified for session IDs "{}" is not in the data file ({})'.format(args.session_key, fname))
             print('The default column name is "SessionId", but you can specify otherwise by setting the `session_key` parameter of the model.')
             sys.exit(1)
-        if gru.item_key not in header:
-            print('ERROR. The colmn specified for item IDs "{}" is not in the data file ({})'.format(gru.item_key, fname))
+        if args.item_key not in header:
+            print('ERROR. The colmn specified for item IDs "{}" is not in the data file ({})'.format(args.item_key, fname))
             print('The default column name is "ItemId", but you can specify otherwise by setting the `item_key` parameter of the model.')
             sys.exit(1)
-        if gru.time_key not in header:
-            print('ERROR. The column specified for time "{}" is not in the data file ({})'.format(gru.time_key, fname))
+        if args.time_key not in header:
+            print('ERROR. The column specified for time "{}" is not in the data file ({})'.format(args.time_key, fname))
             print('The default column name is "Time", but you can specify otherwise by setting the `time_key` parameter of the model.')
             sys.exit(1)
         print('Loading data from TAB separated file: {}'.format(fname))
-        data = pd.read_csv(fname, sep='\t', usecols=[gru.session_key, gru.item_key, gru.time_key], dtype={gru.session_key:'int32', gru.item_key:'str'})
+        data = pd.read_csv(fname, sep='\t', usecols=[args.session_key, args.item_key, args.time_key], dtype={args.session_key:'int32', args.item_key:'str'})
     return data
 
 if (args.parameter_string is not None) + (args.parameter_file is not None) + (args.load_model) != 1:
@@ -91,40 +95,39 @@ else:
         print('Loaded parameters from file: {}'.format(param_file_path))
     if args.parameter_string:
         gru4rec_params = OrderedDict([x.split('=') for x in args.parameter_string.split(',')])
+    print('Creating GRU4Rec model')
     gru = GRU4Rec()
     gru.set_params(**gru4rec_params)
     print('Loading training data...')
-    data = load_data(args.path, gru)
+    data = load_data(args.path, args)
     store_type = 'cpu' if args.sample_store_on_cpu else 'gpu'
     if store_type == 'cpu':
         print('WARNING! The sample store is set to be on the CPU. This will make training significantly slower on the GPU.')
     print('Started training')
     t0 = time.time()
-    gru.fit(data, sample_store=args.sample_store_size, store_type='gpu')
+    gru.fit(data, sample_store=args.sample_store_size, store_type=store_type)
     t1 = time.time()
     print('Total training time: {:.2f}s'.format(t1 - t0))
     if args.save_model is not None:
         print('Saving trained model to: {}'.format(args.save_model))
         gru.savemodel(args.save_model)
-
-items = None
-if args.test_against_items is not None:
-    if args.test_against_items < 50000:
-        print('ERROR. You musn\'t evaluate positive items agains less than 50000 items.')
-        sys.exit(1)
-    print('WARNING! You set the number of negative test items. You musn\'t evaluate positive items against a subset of all items unless the number of items in your data is too high (i.e. above a few millions) and evaluation takes too much time.')
-    supp = data.groupby('ItemId').size()
-    supp.sort_values(inplace=True, ascending=False)
-    items = supp[:args.test_against_items].index
     
 if args.test is not None:
+    if args.primary_metric.lower() == 'recall':
+        pm_index = 0
+    elif args.primary_metric.lower() == 'mrr':
+        pm_index = 1
+    else:
+        raise RuntimeError('Invalid value `{}` for `primary_metric` parameter'.format(args.primary_metric))
     for test_file in args.test:
         print('Loading test data...')
-        test_data = load_data(test_file, gru)
-        for c in args.measure:
-            print('Starting evaluation (cut-off={}, using {} mode for tiebreaking)'.format(c, args.eval_type))
-            t0 = time.time()
-            res = evaluation.evaluate_gpu(gru, test_data, items, batch_size=100, cut_off=c, mode=args.eval_type)
-            t1 = time.time()
-            print('Evaluation took {:.2f}s'.format(t1 - t0))
-            print('Recall@{}: {:.6f} MRR@{}: {:.6f}'.format(c, res[0], c, res[1]))
+        test_data = load_data(test_file, args)
+        print('Starting evaluation (cut-off={}, using {} mode for tiebreaking)'.format(args.measure, args.eval_type))
+        t0 = time.time()
+        res = evaluation.evaluate_gpu(gru, test_data, batch_size=512, cut_off=args.measure, mode=args.eval_type, item_key=args.item_key, session_key=args.session_key, time_key=args.time_key)
+        t1 = time.time()
+        print('Evaluation took {:.2f}s'.format(t1 - t0))
+        for i, c in enumerate(args.measure):
+            print('Recall@{}: {:.6f} MRR@{}: {:.6f}'.format(c, res[0][i], c, res[1][i]))
+        if args.log_primary_metric:
+            print('PRIMARY METRIC: {}'.format(res[pm_index][0]))

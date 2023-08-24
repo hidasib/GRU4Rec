@@ -12,7 +12,7 @@ import theano
 from theano import tensor as T
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
-def evaluate_gpu(gru, test_data, items=None, session_key='SessionId', item_key='ItemId', time_key='Time', cut_off=20, batch_size=100, mode='standard'):
+def evaluate_gpu(gru, test_data, items=None, session_key='SessionId', item_key='ItemId', time_key='Time', cut_off=[20], batch_size=100, mode='standard'):
     '''
     Evaluates the GRU4Rec network quickly wrt. recommendation accuracy measured by recall@N and MRR@N.
 
@@ -45,12 +45,12 @@ def evaluate_gpu(gru, test_data, items=None, session_key='SessionId', item_key='
     
     '''
     if gru.error_during_train: raise Exception
-    print('Measuring Recall@{} and MRR@{}'.format(cut_off, cut_off))
+    multi_cut_off = (type(cut_off) == list) or (type(cut_off) == tuple)
+    print('Measuring Recall@{} and MRR@{}'.format(','.join([str(c) for c in cut_off]), ','.join([str(c) for c in cut_off])))
     srng = RandomStreams()
     X = T.ivector()
     Y = T.ivector()
     M = T.iscalar()
-    C = []
     yhat, H, updatesH = gru.symbolic_predict(X, Y, M, items, batch_size)
     if mode == 'tiebreaking': yhat += srng.uniform(size=yhat.shape) * 1e-10
     if items is None:
@@ -64,15 +64,29 @@ def evaluate_gpu(gru, test_data, items=None, session_key='SessionId', item_key='
     elif mode == 'median':  ranks = (others > targets).sum(axis=0) + 0.5*((others == targets).sum(axis=0) - 1) + 1
     elif mode == 'tiebreaking': ranks = (others > targets).sum(axis=0) + 1
     else: raise NotImplementedError
-    REC = (ranks <= cut_off).sum()
-    MRR = ((ranks <= cut_off) / ranks).sum()
-    evaluate = theano.function(inputs=[X, Y, M] + C, outputs=[REC, MRR], updates=updatesH, allow_input_downcast=True, on_unused_input='ignore')
+    REC = []
+    MRR = []
+    if multi_cut_off:
+        for c in cut_off:
+            REC.append((ranks <= c).sum())
+            MRR.append(((ranks <= c) / ranks).sum())
+    else:
+        REC.append((ranks <= cut_off).sum())
+        MRR.append(((ranks <= cut_off) / ranks).sum())
+    evaluate = theano.function(inputs=[X, Y, M], outputs=REC+MRR, updates=updatesH, allow_input_downcast=True, on_unused_input='ignore')
     test_data = pd.merge(test_data, pd.DataFrame({'ItemIdx':gru.itemidmap.values, item_key:gru.itemidmap.index}), on=item_key, how='inner')
     test_data.sort_values([session_key, time_key, item_key], inplace=True)
     test_data_items = test_data.ItemIdx.values
     if items is not None:
         item_idxs = gru.itemidmap[items]
-    recall, mrr, n = 0, 0, 0
+    recall, mrr, n = [], [], 0
+    if multi_cut_off:
+        for i in range(len(cut_off)):
+            recall.append(0)
+            mrr.append(0)
+    else:
+        recall.append(0)
+        mrr.append(0)
     iters = np.arange(batch_size)
     maxiter = iters.max()
     offset_sessions = np.zeros(test_data[session_key].nunique()+1, dtype=np.int32)
@@ -91,9 +105,14 @@ def evaluate_gpu(gru, test_data, items=None, session_key='SessionId', item_key='
                 y = np.hstack([out_idx, item_idxs])
             else:
                 y = out_idx
-            rec, m = evaluate(in_idx, y, len(iters), *cidxs)
-            recall += rec
-            mrr += m
+            results = evaluate(in_idx, y, len(iters), *cidxs)
+            if multi_cut_off:
+                for j in range(len(cut_off)):
+                    recall[j] += results[j]
+                    mrr[j] += results[j + len(cut_off)]
+            else:
+                recall[0] += results[0]
+                mrr[0] += results[1]
             n += len(iters)
         start = start+minlen-1
         finished_mask = (end-start<=1)
@@ -118,7 +137,14 @@ def evaluate_gpu(gru, test_data, items=None, session_key='SessionId', item_key='
                 tmp[mask] = 0
                 tmp = tmp[valid_mask]
                 H[i].set_value(tmp, borrow=True)
-    return recall/n, mrr/n
+    if multi_cut_off:
+        for i in range(len(cut_off)):
+            recall[i] /= n
+            mrr[i] /= n
+    else:
+        recall[0] /= n
+        mrr[0] /= n
+    return recall, mrr
 
 def evaluate_sessions_batch(pr, test_data, items=None, cut_off=20, batch_size=100, mode='standard', session_key='SessionId', item_key='ItemId', time_key='Time'):
     '''

@@ -57,7 +57,7 @@ class GRU4Rec:
         if not zero, Nesterov momentum will be applied during training with the given strength (default: 0.0)
     lmbd : float
         coefficient of the L2 regularization (default: 0.0)
-    embedding : int
+    embedding : int or "layersize"
         size of the embedding used, 0 means not to use embedding (default: 0)
     n_sample : int
         number of additional negative samples to be used (besides the other examples of the minibatch) (default: 2048)
@@ -117,7 +117,10 @@ class GRU4Rec:
         self.logq = logq
         self.train_random_order = train_random_order
         self.lmbd = lmbd
-        self.embedding = embedding
+        if embedding == 'layersize':
+            self.embedding = self.layers[0]
+        else:
+            self.embedding = embedding
         self.constrained_embedding = constrained_embedding
         self.time_sort = time_sort
         self.adapt = adapt
@@ -172,11 +175,16 @@ class GRU4Rec:
                     else:
                         print('Invalid value for boolean parameter: {}'.format(v))
                         raise NotImplementedError
+                if k == 'embedding' and v == 'layersize':
+                    self.embedding = 'layersize'
                 setattr(self, k, type(getattr(self, k))(v))
                 if k == 'loss': self.set_loss_function(self.loss)
                 if k == 'final_act': self.set_final_activation(self.final_act)
                 if k == 'hidden_act': self.set_hidden_activation(self.hidden_act)
                 print('SET   {}{}TO   {}{}(type: {})'.format(k, ' '*(maxk_len-len(k)+3), getattr(self, k), ' '*(maxv_len-len(str(getattr(self, k)))+3), type(getattr(self, k))))
+        if self.embedding == 'layersize':
+            self.embedding = self.layers[0]
+            print('SET   {}{}TO   {}{}(type: {})'.format('embedding', ' '*(maxk_len-len('embedding')+3), getattr(self, 'embedding'), ' '*(maxv_len-len(str(getattr(self, 'embedding')))+3), type(getattr(self, 'embedding'))))
     ######################ACTIVATION FUNCTIONS#####################
     def linear(self,X):
         return X
